@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>webterm</title>
+    <link rel="stylesheet" href="/vendor/xterm.css" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div id="terminal"></div>
+
+    <div id="status" class="status hidden"></div>
+
+    <div id="overlay" class="overlay hidden">
+      <div class="card">
+        <h2 id="overlay-title">Disconnected</h2>
+        <p id="overlay-body"></p>
+        <div id="overlay-actions" class="actions"></div>
+      </div>
+    </div>
+
+    <script src="/vendor/xterm.js"></script>
+    <script src="/vendor/addon-fit.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

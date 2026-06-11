@@ -1,0 +1,28 @@
+{
+  "name": "webterm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web-based persistent virtual terminal over plain HTTP/1.1 (no WebSocket, no HTTP/2). Survives a TLS-inspecting corporate proxy that occasionally hijacks requests with an interstitial acknowledgement page.",
+  "type": "commonjs",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js",
+    "test:smoke": "node scripts/browser-smoke.js",
+    "test:nag": "node scripts/browser-nag.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-serialize": "^0.13.0",
+    "@xterm/headless": "^5.5.0",
+    "@xterm/xterm": "^5.5.0",
+    "express": "^4.21.2",
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^23.0.0"
+  }
+}
