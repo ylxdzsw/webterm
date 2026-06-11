@@ -91,6 +91,15 @@ paste are passed through by xterm.js.
 
 ## Security
 
-This exposes a shell to anyone with the URL and token. Always set a strong
-`WEBTERM_TOKEN`, serve only over TLS, and consider additional restrictions
-(nginx allow-list, basic auth) at the proxy layer.
+This exposes a shell to anyone with the URL and token, so:
+
+- **Set a strong `WEBTERM_TOKEN`.** Generate it with `openssl rand -base64 32`.
+  If `WEBTERM_TOKEN` is set but empty or a known placeholder, the server refuses
+  to start (fail closed). If it is left entirely unset, a random one-off token
+  is generated and printed (local use only).
+- The token is sent **only via the `Authorization: Bearer` header** — it is
+  never accepted as a `?token=` query parameter (which would leak into proxy
+  logs, history, and Referer headers).
+- Serve only over TLS and consider additional restrictions (nginx allow-list,
+  basic auth) at the proxy layer.
+- Concurrent sessions are capped by `WEBTERM_MAX_SESSIONS` (default 8).

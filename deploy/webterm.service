@@ -22,7 +22,11 @@ RestartSec=2
 # Configuration (or use an EnvironmentFile=/opt/webterm/.env).
 Environment=WEBTERM_HOST=127.0.0.1
 Environment=WEBTERM_PORT=8080
-Environment=WEBTERM_TOKEN=change-me-to-a-long-random-string
+# REQUIRED: set a strong random token before enabling the service. The server
+# refuses to start if this is empty or a placeholder. Generate one with:
+#   openssl rand -base64 32
+# Prefer keeping the secret out of the unit file via EnvironmentFile below.
+Environment=WEBTERM_TOKEN=
 # Environment=WEBTERM_CMD=/bin/bash
 # Environment=WEBTERM_ARGS=-l
 # EnvironmentFile=/opt/webterm/.env

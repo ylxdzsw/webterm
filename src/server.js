@@ -14,11 +14,48 @@ const DEFAULT_SESSION = process.env.WEBTERM_SESSION || 'default';
 // Auth token. If not provided, generate one and print it so the operator can
 // copy it into the browser. The whole point of this app is to expose a shell,
 // so an unauthenticated endpoint would be an open root shell to the internet.
-let TOKEN = process.env.WEBTERM_TOKEN || '';
-if (!TOKEN) {
+//
+// Rules:
+//   - WEBTERM_TOKEN entirely unset  -> generate a random one-off token (local
+//     convenience; printed on startup).
+//   - WEBTERM_TOKEN set but empty/blank or a known placeholder -> refuse to
+//     start (fail closed). This prevents deploy templates from shipping a
+//     working weak secret.
+const PLACEHOLDER_TOKENS = new Set([
+  'change-me-to-a-long-random-string',
+  'change-me',
+  'changeme',
+  'token',
+  'secret',
+  'password',
+]);
+
+let TOKEN = process.env.WEBTERM_TOKEN;
+if (TOKEN === undefined) {
   TOKEN = crypto.randomBytes(24).toString('base64url');
   console.log('\n  No WEBTERM_TOKEN set. Generated a one-off token for this run:');
   console.log('  WEBTERM_TOKEN=' + TOKEN + '\n');
+} else {
+  TOKEN = TOKEN.trim();
+  if (!TOKEN) {
+    console.error(
+      'FATAL: WEBTERM_TOKEN is set but empty. Provide a strong token, e.g.:\n' +
+        '  WEBTERM_TOKEN=$(openssl rand -base64 32)'
+    );
+    process.exit(1);
+  }
+  if (PLACEHOLDER_TOKENS.has(TOKEN.toLowerCase())) {
+    console.error(
+      'FATAL: WEBTERM_TOKEN is a placeholder value. Set a real random token, e.g.:\n' +
+        '  WEBTERM_TOKEN=$(openssl rand -base64 32)'
+    );
+    process.exit(1);
+  }
+  if (TOKEN.length < 16) {
+    console.warn(
+      'WARNING: WEBTERM_TOKEN is shorter than 16 characters; use a longer random value.'
+    );
+  }
 }
 
 const manager = new SessionManager();
@@ -39,10 +76,11 @@ function checkToken(provided) {
 }
 
 function auth(req, res, next) {
+  // Header-only: never accept the token via query string, which would leak it
+  // into proxy/access logs, browser history, and Referer headers.
   let tok = null;
   const h = req.get('authorization');
   if (h && h.startsWith('Bearer ')) tok = h.slice(7);
-  if (!tok && typeof req.query.token === 'string') tok = req.query.token;
   if (!checkToken(tok)) {
     return res
       .status(401)
