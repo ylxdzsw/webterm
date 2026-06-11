@@ -1,0 +1,31 @@
+# systemd unit for webterm. Copy to /etc/systemd/system/webterm.service,
+# edit User/paths/token, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now webterm
+#
+# NOTE: the persistent terminal lives inside this process. Restarting this
+# service starts a fresh shell and loses any running session — that is the
+# accepted trade-off of not using dtach/tmux. Avoid unnecessary restarts.
+
+[Unit]
+Description=webterm - persistent web terminal over HTTP/1.1
+After=network.target
+
+[Service]
+Type=simple
+User=youruser
+WorkingDirectory=/opt/webterm
+ExecStart=/usr/bin/node src/server.js
+Restart=on-failure
+RestartSec=2
+
+# Configuration (or use an EnvironmentFile=/opt/webterm/.env).
+Environment=WEBTERM_HOST=127.0.0.1
+Environment=WEBTERM_PORT=8080
+Environment=WEBTERM_TOKEN=change-me-to-a-long-random-string
+# Environment=WEBTERM_CMD=/bin/bash
+# Environment=WEBTERM_ARGS=-l
+# EnvironmentFile=/opt/webterm/.env
+
+[Install]
+WantedBy=multi-user.target
