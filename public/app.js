@@ -97,9 +97,11 @@ function hideOverlay() {
 
 // ---------------------------------------------------------------- connection state
 let abort = null; // AbortController for the active stream
-let connected = false;
+let connected = false; // stream is open and reading
+let connecting = false; // a connect() attempt is in flight (guards against overlap)
 let manualStop = false; // true when a nag was detected; suppress auto-reconnect
 let reconnectDelay = 1000;
+let reconnectTimer = null;
 
 function api(path) {
   return path + (path.includes('?') ? '&' : '?') + 'session=' + encodeURIComponent(SESSION);
@@ -108,6 +110,8 @@ function api(path) {
 function nagDetected() {
   manualStop = true;
   connected = false;
+  connecting = false;
+  clearReconnect();
   if (abort) abort.abort();
   setStatus('blocked', 'warn');
   const origin = location.origin + '/';
@@ -143,6 +147,8 @@ function showDisconnected(msg) {
 function showAuthError() {
   manualStop = true;
   connected = false;
+  connecting = false;
+  clearReconnect();
   if (abort) abort.abort();
   setStatus('unauthorized', 'err');
   showOverlay(
@@ -198,31 +204,75 @@ function isOurs(text) {
 
 // ---------------------------------------------------------------- output stream
 async function connect() {
-  if (connected) return;
+  // Guard against overlapping attempts: set `connecting` synchronously before
+  // any await so a second call (e.g. a stale reconnect timer) bails out.
+  if (connected || connecting) return;
+  connecting = true;
   manualStop = false;
+  clearReconnect();
   hideOverlay();
   setStatus('connecting…', '');
+
+  // Tear down any previous stream before starting a new one.
+  if (abort) {
+    try {
+      abort.abort();
+    } catch (e) {
+      /* ignore */
+    }
+  }
 
   // Make the backend PTY match our viewport before we snapshot/stream so the
   // first paint is at the right size.
   await sendResize(true);
-  if (manualStop) return;
+  if (manualStop) {
+    connecting = false;
+    return;
+  }
 
   abort = new AbortController();
+  const myAbort = abort;
   let resp;
   try {
     resp = await fetch(api('/api/stream'), {
       headers: authHeaders(),
-      signal: abort.signal,
+      signal: myAbort.signal,
       cache: 'no-store',
     });
   } catch (e) {
+    connecting = false;
     return scheduleReconnect();
   }
 
-  if (resp.status === 401) return showAuthError();
+  if (resp.status === 401) {
+    connecting = false;
+    return showAuthError();
+  }
+  if (resp.status === 503) {
+    connecting = false;
+    manualStop = true;
+    clearReconnect();
+    if (abort) abort.abort();
+    setStatus('at capacity', 'err');
+    showOverlay(
+      'Server at capacity',
+      'Too many terminal sessions are open on the server. Close some and reconnect.',
+      [
+        {
+          label: 'Reconnect',
+          onClick: () => {
+            hideOverlay();
+            manualStop = false;
+            connect();
+          },
+        },
+      ]
+    );
+    return;
+  }
   if (!resp.ok || !resp.body) {
     // A non-OK response with HTML is almost certainly the nag page.
+    connecting = false;
     const txt = await safeText(resp);
     if (!isOurs(txt)) return nagDetected();
     return scheduleReconnect();
@@ -233,9 +283,13 @@ async function connect() {
   let buf = '';
   let gotMagic = false;
   connected = true;
+  connecting = false;
   reconnectDelay = 1000;
   setStatus('connected', 'ok');
   setTimeout(() => setStatus(''), 1200);
+  // Re-sync size now that the session is guaranteed to exist (resize no longer
+  // creates sessions, so the pre-stream resize is a no-op for brand-new ones).
+  sendResize(true);
 
   try {
     for (;;) {
@@ -293,9 +347,17 @@ function handleFrame(line) {
       break;
     case 'k':
       break; // keepalive
+    case 'bye':
+      // Server is replacing this session (e.g. restart). Drop and reconnect to
+      // the new one; aborting ends the read loop, which schedules a reconnect.
+      reconnectDelay = 1000;
+      if (abort) abort.abort();
+      break;
     case 'exit':
       connected = false;
+      connecting = false;
       manualStop = true;
+      clearReconnect();
       if (abort) abort.abort();
       showSessionEnded(msg.code);
       break;
@@ -305,10 +367,18 @@ function handleFrame(line) {
 }
 
 function scheduleReconnect() {
-  if (manualStop) return;
+  if (manualStop || connected || connecting) return;
+  clearReconnect();
   showDisconnected();
-  setTimeout(connect, reconnectDelay);
+  reconnectTimer = setTimeout(connect, reconnectDelay);
   reconnectDelay = Math.min(reconnectDelay * 2, 15000);
+}
+
+function clearReconnect() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
 }
 
 // ---------------------------------------------------------------- input

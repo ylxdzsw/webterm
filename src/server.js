@@ -87,6 +87,12 @@ app.get('/api/health', (req, res) => {
 // screen snapshot, then live output. Keepalive frames prevent idle timeouts.
 app.get('/api/stream', auth, (req, res) => {
   const session = manager.getOrCreate(sessionIdFrom(req));
+  if (!session) {
+    return res
+      .status(503)
+      .type('application/json')
+      .send(frame({ t: 'error', ok: false, error: 'too-many-sessions' }));
+  }
 
   res.status(200);
   res.set({
@@ -167,7 +173,11 @@ app.post('/api/input', auth, express.json({ limit: '1mb' }), (req, res) => {
 });
 
 app.post('/api/resize', auth, express.json({ limit: '1kb' }), (req, res) => {
-  const session = manager.getOrCreate(sessionIdFrom(req));
+  // Don't let resize spawn sessions; only resize one that already exists.
+  const session = manager.get(sessionIdFrom(req));
+  if (!session || session.ended) {
+    return res.type('application/json').send(frame({ t: 'ack', ok: false, error: 'no-session' }));
+  }
   const { cols, rows } = req.body || {};
   session.resize(cols, rows);
   res
@@ -177,6 +187,9 @@ app.post('/api/resize', auth, express.json({ limit: '1kb' }), (req, res) => {
 
 app.post('/api/restart', auth, express.json({ limit: '1kb' }), (req, res) => {
   const id = sessionIdFrom(req);
+  if (!manager.canCreate(id)) {
+    return res.type('application/json').send(frame({ t: 'ack', ok: false, error: 'too-many-sessions' }));
+  }
   const session = manager.restart(id);
   res
     .type('application/json')

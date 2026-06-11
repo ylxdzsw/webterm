@@ -42,7 +42,9 @@ class Session {
 
     const shell =
       opts.cmd || process.env.WEBTERM_CMD || process.env.SHELL || 'bash';
-    const args = opts.args || parseArgs(process.env.WEBTERM_ARGS) || ['-l'];
+    // An explicitly-set WEBTERM_ARGS (even empty) wins over the "-l" default,
+    // so `WEBTERM_CMD=opencode` + `WEBTERM_ARGS=` launches bare `opencode`.
+    const args = opts.args || envArgs();
     const env = Object.assign({}, process.env, {
       // Make full-screen TUIs (opencode, claude code, vim, htop, ...) behave:
       TERM: 'xterm-256color',
@@ -127,6 +129,21 @@ class Session {
     }
   }
 
+  // Gracefully end this session: tell attached viewers (so they don't sit on a
+  // frozen "connected" stream), close their HTTP responses, then tear down. A
+  // `bye` frame asks the client to reconnect (e.g. after a restart) rather than
+  // treating it as a terminal exit.
+  shutdown(reason) {
+    this.ended = true;
+    const line = frame({ t: 'bye', reason: reason || 'shutdown' });
+    for (const sub of this.subscribers) {
+      sub.send(line);
+      sub.end();
+    }
+    this.subscribers.clear();
+    this.destroy();
+  }
+
   destroy() {
     try {
       this.pty.kill();
@@ -147,14 +164,18 @@ class Session {
 class SessionManager {
   constructor() {
     this.sessions = new Map();
+    this.maxSessions = Math.max(1, parseInt(process.env.WEBTERM_MAX_SESSIONS || '8', 10));
   }
 
+  // Returns the existing session, or creates one if under the cap. Returns null
+  // when a new session would exceed WEBTERM_MAX_SESSIONS (prevents a single
+  // token from spawning unbounded shells via arbitrary ?session= values).
   getOrCreate(id, opts) {
-    let s = this.sessions.get(id);
-    if (!s) {
-      s = new Session(id, opts);
-      this.sessions.set(id, s);
-    }
+    const existing = this.sessions.get(id);
+    if (existing) return existing;
+    if (this.sessions.size >= this.maxSessions) return null;
+    const s = new Session(id, opts);
+    this.sessions.set(id, s);
     return s;
   }
 
@@ -162,12 +183,19 @@ class SessionManager {
     return this.sessions.get(id) || null;
   }
 
-  // Tear down the existing session (if any) and start a fresh shell.
+  // Whether (re)creating this id is allowed under the cap. Existing ids are
+  // always allowed (replacement doesn't grow the map).
+  canCreate(id) {
+    return this.sessions.has(id) || this.sessions.size < this.maxSessions;
+  }
+
+  // Replace the session with a fresh shell, notifying any attached viewers of
+  // the old one so they reconnect instead of freezing.
   restart(id, opts) {
     const old = this.sessions.get(id);
-    if (old) old.destroy();
     const s = new Session(id, opts);
     this.sessions.set(id, s);
+    if (old) old.shutdown('restart');
     return s;
   }
 
@@ -182,9 +210,9 @@ function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
 }
 
-function parseArgs(s) {
-  if (!s) return null;
-  return s.split(' ').filter(Boolean);
+function envArgs() {
+  if (process.env.WEBTERM_ARGS === undefined) return ['-l'];
+  return process.env.WEBTERM_ARGS.split(' ').filter(Boolean);
 }
 
 module.exports = { Session, SessionManager };
