@@ -382,24 +382,45 @@ function clearReconnect() {
 }
 
 // ---------------------------------------------------------------- input
+//
+// Input is sent as short POSTs, but coalesced *self-clocked* to the network:
+// we keep at most one request in flight, and everything typed while it is in
+// flight accumulates into a single buffer that is sent as one POST the moment
+// the previous one returns. So a burst typed during one proxy round-trip
+// collapses to ~one request per round-trip (fast link -> small frequent
+// batches; slow link -> fewer, larger batches), instead of one request per
+// 8ms window queued behind each other. Keeping exactly one request in flight
+// also preserves keystroke ordering without input sequence numbers, even if
+// the proxy/connection pool would otherwise reorder concurrent requests.
 let inputBuf = '';
 let inputTimer = null;
-let inputSending = Promise.resolve();
+let inputInFlight = false;
 
 term.onData((data) => {
   inputBuf += data;
-  if (inputTimer == null) {
-    inputTimer = setTimeout(flushInput, INPUT_FLUSH_MS);
-  }
+  scheduleFlush();
 });
+
+function scheduleFlush() {
+  // While a POST is in flight, just accumulate; the in-flight request's
+  // completion handler will drain whatever piled up in one follow-up POST.
+  if (inputInFlight || inputTimer != null) return;
+  // A tiny debounce still coalesces simultaneous keystrokes (e.g. a paste or
+  // an escape sequence) into the first batch even on a zero-latency link.
+  inputTimer = setTimeout(flushInput, INPUT_FLUSH_MS);
+}
 
 function flushInput() {
   inputTimer = null;
-  if (!inputBuf) return;
+  if (inputInFlight || !inputBuf) return;
   const payload = inputBuf;
   inputBuf = '';
-  // Serialize sends so keystrokes stay in order even under coalescing.
-  inputSending = inputSending.then(() => sendInput(payload));
+  inputInFlight = true;
+  sendInput(payload).finally(() => {
+    inputInFlight = false;
+    // Anything typed during the round-trip is now coalesced into one POST.
+    if (inputBuf) flushInput();
+  });
 }
 
 async function sendInput(payload) {
