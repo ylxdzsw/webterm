@@ -1,50 +1,65 @@
 # Sample nginx reverse-proxy for webterm.
 #
-# The critical part is disabling buffering on /api/stream so the long-lived
-# chunked HTTP/1.1 response is flushed to the client incrementally (this is what
-# carries terminal output in real time). The app also sends `X-Accel-Buffering:
-# no`, but we set it explicitly here too.
+# Multi-session is done entirely here: each slot id 0..7 maps to one
+# socket-activated backend (webterm@<id>.service) listening on its own unix
+# socket. nginx routes webterm.example.com/<id>/... to /run/webterm/<id>.sock,
+# stripping the /<id>/ prefix so every backend is identical and slot-agnostic.
+#
+# Two things that matter:
+#   1. Relative URLs: the page is served under /<id>/, and the client uses
+#      relative URLs, so a bare /<id> is redirected to /<id>/ to give the
+#      browser the right base. The root / is redirected to /0/.
+#   2. proxy_buffering off: the long-lived chunked /api/stream response must be
+#      flushed incrementally. We disable buffering for the whole slot location
+#      (terminal traffic is tiny, so there is no downside).
+#
+# To change the number of slots, edit the [0-7] character classes below and the
+# `systemctl enable` instances in webterm@.socket. The id range must be a
+# single regex character class (so 0..7, or 0..9, etc.).
 
 server {
-    listen 443 ssl http2;
-    server_name terminal.example.com;
+    listen 443 ssl;
+    # http2 is fine here; the backend is always HTTP/1.1.
+    server_name webterm.example.com;
 
-    ssl_certificate     /etc/letsencrypt/live/terminal.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/terminal.example.com/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/webterm.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/webterm.example.com/privkey.pem;
 
-    # Backend Node process (see systemd unit).
-    set $webterm http://127.0.0.1:8080;
+    # Root -> slot 0. Make the bare domain behave like /0/.
+    location = / {
+        return 308 /0/;
+    }
 
-    # Streaming output endpoint: NO buffering, long read timeout, HTTP/1.1.
-    # (The ?session= query string is matched by this exact location too.)
-    location = /api/stream {
-        proxy_pass $webterm;
+    # A bare /<id> (no trailing slash) -> /<id>/ so the browser resolves the
+    # relative asset/API URLs under the slot prefix.
+    location ~ ^/([0-7])$ {
+        return 308 /$1/;
+    }
+
+    # Per-slot proxy. Capture the slot, strip the /<id>/ prefix, and forward to
+    # that slot's unix socket. `/<id>/` (empty rest) becomes `/` -> index.html.
+    location ~ ^/(?<slot>[0-7])/ {
+        rewrite ^/[0-7]/(.*)$ /$1 break;
+        proxy_pass http://unix:/run/webterm/$slot.sock;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+
+        # Terminal traffic: stream output without buffering, allow long-lived
+        # connections, and never cache/compress.
         proxy_buffering off;
         proxy_cache off;
         gzip off;
         chunked_transfer_encoding on;
         proxy_read_timeout 1h;
         proxy_send_timeout 1h;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-
-    # Everything else (UI, /api/sessions, /api/input, /api/resize).
-    location / {
-        proxy_pass $webterm;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_read_timeout 75s;
     }
 }
 
 # Optional: redirect plain HTTP to HTTPS.
 server {
     listen 80;
-    server_name terminal.example.com;
+    server_name webterm.example.com;
     return 301 https://$host$request_uri;
 }

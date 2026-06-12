@@ -1,0 +1,44 @@
+# Socket-activated service for one webterm slot (%i). Not enabled directly —
+# webterm@%i.socket starts it on the first incoming connection and passes the
+# listening unix socket as a file descriptor (src/server.js listens on it via
+# the LISTEN_FDS protocol).
+#
+# Lifecycle: server.js spawns one shell on startup; when that shell exits the
+# process exits, the unit goes inactive, and its cgroup is reaped. The socket
+# unit re-activates a fresh process (fresh shell) on the next request.
+
+[Unit]
+Description=webterm slot %i - single-shell web terminal over HTTP/1.1
+Requires=webterm@%i.socket
+After=webterm@%i.socket network.target
+# Bound the worst case where the service crashes on every activation: after
+# this many starts in the interval, systemd refuses to start it again (until
+# `systemctl reset-failed`), so a bug can't become an infinite spawn loop.
+StartLimitIntervalSec=10s
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=youruser
+WorkingDirectory=/opt/webterm
+ExecStart=/usr/bin/node src/server.js
+
+# The shell exiting terminates the process; do NOT auto-restart. The matching
+# socket unit brings a fresh instance up on demand. Restart=no is also what
+# keeps a failed start from looping (together with StartLimit* above).
+Restart=no
+
+# Authoritative cleanup: when the unit stops/exits, kill every process left in
+# the service cgroup (backgrounded jobs, daemons the shell forked, ...). This
+# is the most reliable teardown and the reason we bind one shell per unit.
+KillMode=control-group
+
+# REQUIRED: a strong random token shared by all slots. The server refuses to
+# start if this is empty or a placeholder. Generate one with:
+#   openssl rand -base64 32
+# Prefer keeping the secret out of the unit file via EnvironmentFile.
+Environment=WEBTERM_TOKEN=
+# Default program every slot runs (no per-session command anymore):
+# Environment=WEBTERM_CMD=/bin/bash
+# Environment=WEBTERM_ARGS=-l
+# EnvironmentFile=/opt/webterm/.env

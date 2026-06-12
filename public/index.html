@@ -4,38 +4,13 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>webterm</title>
-    <link rel="stylesheet" href="/vendor/xterm.css" />
-    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="vendor/xterm.css" />
+    <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <div id="terminal"></div>
 
     <div id="status" class="status hidden"></div>
-
-    <div id="lobby" class="overlay hidden">
-      <div class="card">
-        <h2>Sessions</h2>
-        <ul id="lobby-list" class="session-list"></ul>
-        <p id="lobby-empty" class="muted hidden">No sessions running yet.</p>
-        <form id="lobby-create" autocomplete="off">
-          <label class="field">
-            <span>Command</span>
-            <input id="create-command" type="text" placeholder="$SHELL -l" spellcheck="false" />
-          </label>
-          <details id="create-advanced">
-            <summary>Advanced</summary>
-            <label class="field">
-              <span>Session id</span>
-              <input id="create-id" type="text" placeholder="(auto)" spellcheck="false" />
-            </label>
-          </details>
-          <p id="create-error" class="err-text hidden"></p>
-          <div class="actions">
-            <button type="submit" id="create-btn">New session</button>
-          </div>
-        </form>
-      </div>
-    </div>
 
     <div id="overlay" class="overlay hidden">
       <div class="card">
@@ -45,8 +20,8 @@
       </div>
     </div>
 
-    <script src="/vendor/xterm.js"></script>
-    <script src="/vendor/addon-fit.js"></script>
-    <script src="/app.js"></script>
+    <script src="vendor/xterm.js"></script>
+    <script src="vendor/addon-fit.js"></script>
+    <script src="app.js"></script>
   </body>
 </html>

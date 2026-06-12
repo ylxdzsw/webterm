@@ -3,16 +3,32 @@
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
-const { SessionManager, ID_RE } = require('./session');
+const { Session } = require('./session');
 const { frame, MAGIC_PREFIX } = require('./protocol');
 
 const HOST = process.env.WEBTERM_HOST || '127.0.0.1';
 const PORT = parseInt(process.env.WEBTERM_PORT || '8080', 10);
 const KEEPALIVE_MS = parseInt(process.env.WEBTERM_KEEPALIVE_MS || '15000', 10);
 
-// Auth token. If not provided, generate one and print it so the operator can
-// copy it into the browser. The whole point of this app is to expose a shell,
-// so an unauthenticated endpoint would be an open root shell to the internet.
+// systemd socket-activation hand-off. When the unit is started by an incoming
+// connection, systemd passes the already-listening socket(s) as fds starting
+// at 3, advertised via LISTEN_FDS and addressed to us via LISTEN_PID. If that
+// matches, we listen on the inherited fd instead of binding a port — this is
+// how `webterm@N.socket` (a unix socket) reaches this process. With no socket
+// activation (plain `npm start`), we fall back to HOST:PORT and serve a single
+// shell at `/`.
+const SD_LISTEN_FDS_START = 3;
+function socketActivationFd() {
+  const n = parseInt(process.env.LISTEN_FDS || '0', 10);
+  if (!Number.isFinite(n) || n < 1) return null;
+  const pidEnv = process.env.LISTEN_PID;
+  if (pidEnv && parseInt(pidEnv, 10) !== process.pid) return null;
+  // We only ever configure a single socket per service instance.
+  return SD_LISTEN_FDS_START;
+}
+
+// Auth token. The whole point of this app is to expose a shell, so an
+// unauthenticated endpoint would be an open shell to the internet.
 //
 // Rules:
 //   - WEBTERM_TOKEN entirely unset  -> generate a random one-off token (local
@@ -57,7 +73,15 @@ if (TOKEN === undefined) {
   }
 }
 
-const manager = new SessionManager();
+// The one session this process owns. Created up front so it is running the
+// moment the first request arrives (the snapshot is ready immediately).
+const session = new Session();
+// When the program exits, the session ends and so does this process. Under
+// systemd the unit goes inactive and its cgroup is reaped; the matching socket
+// unit re-activates a fresh process on the next request.
+session.onExit = (code) => {
+  setImmediate(() => process.exit(code ? 1 : 0));
+};
 
 const app = express();
 app.disable('x-powered-by');
@@ -86,15 +110,11 @@ function auth(req, res, next) {
   next();
 }
 
-function sessionIdFrom(req) {
-  const s = req.query.session;
-  if (typeof s === 'string' && ID_RE.test(s)) return s;
-  return null;
-}
-
 // --- Static UI (no auth: it contains no secrets; the token is entered by the
 // user and sent on the API calls). xterm assets are served locally so we never
-// depend on a CDN that the proxy would hijack.
+// depend on a CDN that the proxy would hijack. Behind nginx the per-slot path
+// prefix (`/N/`) is stripped before requests reach us, so everything here is
+// served from the root either way.
 app.use('/', express.static(path.join(__dirname, '..', 'public')));
 app.use(
   '/vendor/xterm.js',
@@ -115,57 +135,11 @@ app.get('/api/health', (req, res) => {
   res.type('application/json').send(frame({ t: 'health', ok: true }));
 });
 
-// --- Session registry. The lobby lists these and creates/kills them; the
-// stream/input/resize endpoints only operate on sessions that already exist.
-
-app.get('/api/sessions', auth, (req, res) => {
-  res
-    .type('application/json')
-    .send(frame({ t: 'sessions', ok: true, sessions: manager.list(), max: manager.maxSessions }));
-});
-
-// Create a session. Body: { command?: string, id?: string }. An empty/omitted
-// command launches the server default ("$SHELL -l"); an omitted id is derived
-// from the command (program name + sequence). Returns the created session info.
-app.post('/api/sessions', auth, express.json({ limit: '4kb' }), (req, res) => {
-  const body = req.body || {};
-  const command = typeof body.command === 'string' ? body.command : '';
-  const id = typeof body.id === 'string' ? body.id : undefined;
-  const r = manager.create({ id, command });
-  if (!r.ok) {
-    const status = r.error === 'too-many' ? 503 : r.error === 'exists' ? 409 : 400;
-    return res
-      .status(status)
-      .type('application/json')
-      .send(frame({ t: 'created', ok: false, error: r.error }));
-  }
-  res.type('application/json').send(frame({ t: 'created', ok: true, session: r.session.info() }));
-});
-
-// Kill and remove a session. Body: { id }.
-app.post('/api/sessions/close', auth, express.json({ limit: '1kb' }), (req, res) => {
-  const body = req.body || {};
-  const id = typeof body.id === 'string' && ID_RE.test(body.id) ? body.id : null;
-  const ok = id ? manager.close(id) : false;
-  res.type('application/json').send(frame({ t: 'closed', ok }));
-});
-
 // --- Output channel: a single long-lived chunked HTTP/1.1 response.
 // First frame is `hello` (carries the MAGIC_PREFIX so the client can detect the
 // nag page), immediately followed by an `o` frame containing the serialized
 // screen snapshot, then live output. Keepalive frames prevent idle timeouts.
-// Attaches only; a missing/unknown session id is a 404 (the client returns to
-// the lobby), so the stream never silently spawns a shell.
 app.get('/api/stream', auth, (req, res) => {
-  const id = sessionIdFrom(req);
-  const session = id ? manager.get(id) : null;
-  if (!session || session.ended) {
-    return res
-      .status(404)
-      .type('application/json')
-      .send(frame({ t: 'error', ok: false, error: 'not-found' }));
-  }
-
   res.status(200);
   res.set({
     'Content-Type': 'application/x-ndjson; charset=utf-8',
@@ -233,16 +207,13 @@ app.get('/api/stream', auth, (req, res) => {
 });
 
 // --- Input channel: short POSTs carrying base64(UTF-8) keystrokes. The browser
-// reuses the connection (keep-alive) and coalesces rapid keystrokes. A missing
-// session is a 404 (it exited/was killed); the client returns to the lobby.
+// reuses the connection (keep-alive) and coalesces rapid keystrokes.
 app.post('/api/input', auth, express.json({ limit: '1mb' }), (req, res) => {
-  const id = sessionIdFrom(req);
-  const session = id ? manager.get(id) : null;
-  if (!session || session.ended) {
+  if (session.ended) {
     return res
-      .status(404)
+      .status(409)
       .type('application/json')
-      .send(frame({ t: 'ack', ok: false, error: 'not-found' }));
+      .send(frame({ t: 'ack', ok: false, error: 'ended' }));
   }
   const d = req.body && req.body.d;
   if (typeof d === 'string' && d.length) {
@@ -252,13 +223,11 @@ app.post('/api/input', auth, express.json({ limit: '1mb' }), (req, res) => {
 });
 
 app.post('/api/resize', auth, express.json({ limit: '1kb' }), (req, res) => {
-  const id = sessionIdFrom(req);
-  const session = id ? manager.get(id) : null;
-  if (!session || session.ended) {
+  if (session.ended) {
     return res
-      .status(404)
+      .status(409)
       .type('application/json')
-      .send(frame({ t: 'ack', ok: false, error: 'not-found' }));
+      .send(frame({ t: 'ack', ok: false, error: 'ended' }));
   }
   const { cols, rows } = req.body || {};
   session.resize(cols, rows);
@@ -267,9 +236,15 @@ app.post('/api/resize', auth, express.json({ limit: '1kb' }), (req, res) => {
     .send(frame({ t: 'ack', ok: true, cols: session.cols, rows: session.rows }));
 });
 
-const server = app.listen(PORT, HOST, () => {
-  console.log(`webterm listening on http://${HOST}:${PORT}`);
-  console.log('Reverse-proxy this with TLS (nginx) and open it in your browser.');
+const fd = socketActivationFd();
+const listenOpts = fd != null ? { fd } : { host: HOST, port: PORT };
+const server = app.listen(listenOpts, () => {
+  if (fd != null) {
+    console.log(`webterm listening on inherited socket activation fd ${fd}`);
+  } else {
+    console.log(`webterm listening on http://${HOST}:${PORT}`);
+    console.log('Reverse-proxy this with TLS (nginx) and open it in your browser.');
+  }
 });
 
 // Keep long-lived streaming responses from being killed by Node's default
@@ -279,11 +254,11 @@ server.requestTimeout = 0;
 server.keepAliveTimeout = 75000;
 
 function shutdown() {
-  manager.destroyAll();
+  session.destroy();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 2000).unref();
 }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-module.exports = { app, server, manager, MAGIC_PREFIX };
+module.exports = { app, server, session, MAGIC_PREFIX };
