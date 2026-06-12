@@ -4,6 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>webterm</title>
+    <!-- Inline empty icon: avoids a root /favicon.ico request that would not
+         carry the slot prefix and so could not be routed by nginx. -->
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="vendor/xterm.css" />
     <link rel="stylesheet" href="style.css" />
   </head>
