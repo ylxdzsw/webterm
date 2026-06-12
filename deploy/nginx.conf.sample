@@ -16,6 +16,7 @@ server {
     set $webterm http://127.0.0.1:8080;
 
     # Streaming output endpoint: NO buffering, long read timeout, HTTP/1.1.
+    # (The ?session= query string is matched by this exact location too.)
     location = /api/stream {
         proxy_pass $webterm;
         proxy_http_version 1.1;
@@ -30,7 +31,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
     }
 
-    # Everything else (UI, /api/input, /api/resize, /api/restart).
+    # Everything else (UI, /api/sessions, /api/input, /api/resize).
     location / {
         proxy_pass $webterm;
         proxy_http_version 1.1;

@@ -37,7 +37,17 @@ const CHROME =
   }, TOKEN);
 
   await page.goto(URL, { waitUntil: 'domcontentloaded' });
-  // Let it connect and paint the snapshot.
+  // Lobby should appear (no ?session= in the URL). Create a new session.
+  await page.waitForSelector('#create-btn', { visible: true });
+  await new Promise((r) => setTimeout(r, 300));
+  await page.click('#create-btn');
+  // Wait until we're attached (URL gains ?session=) and the snapshot paints.
+  await page.waitForFunction(() => new URLSearchParams(location.search).has('session'), {
+    timeout: 5000,
+  });
+  const sessionId = await page.evaluate(() =>
+    new URLSearchParams(location.search).get('session')
+  );
   await new Promise((r) => setTimeout(r, 1500));
 
   // Type a command that produces a unique marker.
@@ -66,9 +76,12 @@ const CHROME =
   // server snapshot.
   let snapshotHasMarker = false;
   try {
-    const res = await fetch('http://127.0.0.1:8080/api/stream?session=default', {
-      headers: { Authorization: 'Bearer ' + TOKEN },
-    });
+    const res = await fetch(
+      'http://127.0.0.1:8080/api/stream?session=' + encodeURIComponent(sessionId),
+      {
+        headers: { Authorization: 'Bearer ' + TOKEN },
+      }
+    );
     // read a little of the stream
     const reader = res.body.getReader();
     const dec = new TextDecoder();

@@ -12,6 +12,31 @@
 
     <div id="status" class="status hidden"></div>
 
+    <div id="lobby" class="overlay hidden">
+      <div class="card">
+        <h2>Sessions</h2>
+        <ul id="lobby-list" class="session-list"></ul>
+        <p id="lobby-empty" class="muted hidden">No sessions running yet.</p>
+        <form id="lobby-create" autocomplete="off">
+          <label class="field">
+            <span>Command</span>
+            <input id="create-command" type="text" placeholder="$SHELL -l" spellcheck="false" />
+          </label>
+          <details id="create-advanced">
+            <summary>Advanced</summary>
+            <label class="field">
+              <span>Session id</span>
+              <input id="create-id" type="text" placeholder="(auto)" spellcheck="false" />
+            </label>
+          </details>
+          <p id="create-error" class="err-text hidden"></p>
+          <div class="actions">
+            <button type="submit" id="create-btn">New session</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <div id="overlay" class="overlay hidden">
       <div class="card">
         <h2 id="overlay-title">Disconnected</h2>

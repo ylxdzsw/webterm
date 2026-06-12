@@ -9,7 +9,8 @@
     "start": "node src/server.js",
     "dev": "node src/server.js",
     "test:smoke": "node scripts/browser-smoke.js",
-    "test:nag": "node scripts/browser-nag.js"
+    "test:nag": "node scripts/browser-nag.js",
+    "test:lobby": "node scripts/browser-lobby.js"
   },
   "engines": {
     "node": ">=18"

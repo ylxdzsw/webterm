@@ -3,9 +3,9 @@
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now webterm
 #
-# NOTE: the persistent terminal lives inside this process. Restarting this
-# service starts a fresh shell and loses any running session — that is the
-# accepted trade-off of not using dtach/tmux. Avoid unnecessary restarts.
+# NOTE: all terminal sessions live inside this process. Restarting this service
+# kills every running session — that is the accepted trade-off of not using
+# dtach/tmux. Avoid unnecessary restarts.
 
 [Unit]
 Description=webterm - persistent web terminal over HTTP/1.1
