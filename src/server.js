@@ -3,13 +3,12 @@
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
-const { SessionManager } = require('./session');
+const { SessionManager, ID_RE } = require('./session');
 const { frame, MAGIC_PREFIX } = require('./protocol');
 
 const HOST = process.env.WEBTERM_HOST || '127.0.0.1';
 const PORT = parseInt(process.env.WEBTERM_PORT || '8080', 10);
 const KEEPALIVE_MS = parseInt(process.env.WEBTERM_KEEPALIVE_MS || '15000', 10);
-const DEFAULT_SESSION = process.env.WEBTERM_SESSION || 'default';
 
 // Auth token. If not provided, generate one and print it so the operator can
 // copy it into the browser. The whole point of this app is to expose a shell,
@@ -59,9 +58,6 @@ if (TOKEN === undefined) {
 }
 
 const manager = new SessionManager();
-// Start the default session eagerly so the shell is alive and persistent from
-// process start, independent of whether a browser is currently attached.
-manager.getOrCreate(DEFAULT_SESSION);
 
 const app = express();
 app.disable('x-powered-by');
@@ -92,8 +88,8 @@ function auth(req, res, next) {
 
 function sessionIdFrom(req) {
   const s = req.query.session;
-  if (typeof s === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(s)) return s;
-  return DEFAULT_SESSION;
+  if (typeof s === 'string' && ID_RE.test(s)) return s;
+  return null;
 }
 
 // --- Static UI (no auth: it contains no secrets; the token is entered by the
@@ -119,17 +115,55 @@ app.get('/api/health', (req, res) => {
   res.type('application/json').send(frame({ t: 'health', ok: true }));
 });
 
+// --- Session registry. The lobby lists these and creates/kills them; the
+// stream/input/resize endpoints only operate on sessions that already exist.
+
+app.get('/api/sessions', auth, (req, res) => {
+  res
+    .type('application/json')
+    .send(frame({ t: 'sessions', ok: true, sessions: manager.list(), max: manager.maxSessions }));
+});
+
+// Create a session. Body: { command?: string, id?: string }. An empty/omitted
+// command launches the server default ("$SHELL -l"); an omitted id is derived
+// from the command (program name + sequence). Returns the created session info.
+app.post('/api/sessions', auth, express.json({ limit: '4kb' }), (req, res) => {
+  const body = req.body || {};
+  const command = typeof body.command === 'string' ? body.command : '';
+  const id = typeof body.id === 'string' ? body.id : undefined;
+  const r = manager.create({ id, command });
+  if (!r.ok) {
+    const status = r.error === 'too-many' ? 503 : r.error === 'exists' ? 409 : 400;
+    return res
+      .status(status)
+      .type('application/json')
+      .send(frame({ t: 'created', ok: false, error: r.error }));
+  }
+  res.type('application/json').send(frame({ t: 'created', ok: true, session: r.session.info() }));
+});
+
+// Kill and remove a session. Body: { id }.
+app.post('/api/sessions/close', auth, express.json({ limit: '1kb' }), (req, res) => {
+  const body = req.body || {};
+  const id = typeof body.id === 'string' && ID_RE.test(body.id) ? body.id : null;
+  const ok = id ? manager.close(id) : false;
+  res.type('application/json').send(frame({ t: 'closed', ok }));
+});
+
 // --- Output channel: a single long-lived chunked HTTP/1.1 response.
 // First frame is `hello` (carries the MAGIC_PREFIX so the client can detect the
 // nag page), immediately followed by an `o` frame containing the serialized
 // screen snapshot, then live output. Keepalive frames prevent idle timeouts.
+// Attaches only; a missing/unknown session id is a 404 (the client returns to
+// the lobby), so the stream never silently spawns a shell.
 app.get('/api/stream', auth, (req, res) => {
-  const session = manager.getOrCreate(sessionIdFrom(req));
-  if (!session) {
+  const id = sessionIdFrom(req);
+  const session = id ? manager.get(id) : null;
+  if (!session || session.ended) {
     return res
-      .status(503)
+      .status(404)
       .type('application/json')
-      .send(frame({ t: 'error', ok: false, error: 'too-many-sessions' }));
+      .send(frame({ t: 'error', ok: false, error: 'not-found' }));
   }
 
   res.status(200);
@@ -169,6 +203,8 @@ app.get('/api/stream', auth, (req, res) => {
       seq: session.bytes,
       cols: session.cols,
       rows: session.rows,
+      command: session.command,
+      title: session.title,
       ended: session.ended,
     })
   );
@@ -197,11 +233,16 @@ app.get('/api/stream', auth, (req, res) => {
 });
 
 // --- Input channel: short POSTs carrying base64(UTF-8) keystrokes. The browser
-// reuses the connection (keep-alive) and coalesces rapid keystrokes.
+// reuses the connection (keep-alive) and coalesces rapid keystrokes. A missing
+// session is a 404 (it exited/was killed); the client returns to the lobby.
 app.post('/api/input', auth, express.json({ limit: '1mb' }), (req, res) => {
-  const session = manager.get(sessionIdFrom(req));
+  const id = sessionIdFrom(req);
+  const session = id ? manager.get(id) : null;
   if (!session || session.ended) {
-    return res.type('application/json').send(frame({ t: 'ack', ok: false, error: 'no-session' }));
+    return res
+      .status(404)
+      .type('application/json')
+      .send(frame({ t: 'ack', ok: false, error: 'not-found' }));
   }
   const d = req.body && req.body.d;
   if (typeof d === 'string' && d.length) {
@@ -211,10 +252,13 @@ app.post('/api/input', auth, express.json({ limit: '1mb' }), (req, res) => {
 });
 
 app.post('/api/resize', auth, express.json({ limit: '1kb' }), (req, res) => {
-  // Don't let resize spawn sessions; only resize one that already exists.
-  const session = manager.get(sessionIdFrom(req));
+  const id = sessionIdFrom(req);
+  const session = id ? manager.get(id) : null;
   if (!session || session.ended) {
-    return res.type('application/json').send(frame({ t: 'ack', ok: false, error: 'no-session' }));
+    return res
+      .status(404)
+      .type('application/json')
+      .send(frame({ t: 'ack', ok: false, error: 'not-found' }));
   }
   const { cols, rows } = req.body || {};
   session.resize(cols, rows);
@@ -223,19 +267,8 @@ app.post('/api/resize', auth, express.json({ limit: '1kb' }), (req, res) => {
     .send(frame({ t: 'ack', ok: true, cols: session.cols, rows: session.rows }));
 });
 
-app.post('/api/restart', auth, express.json({ limit: '1kb' }), (req, res) => {
-  const id = sessionIdFrom(req);
-  if (!manager.canCreate(id)) {
-    return res.type('application/json').send(frame({ t: 'ack', ok: false, error: 'too-many-sessions' }));
-  }
-  const session = manager.restart(id);
-  res
-    .type('application/json')
-    .send(frame({ t: 'ack', ok: true, restarted: true, cols: session.cols, rows: session.rows }));
-});
-
 const server = app.listen(PORT, HOST, () => {
-  console.log(`webterm listening on http://${HOST}:${PORT}  (session "${DEFAULT_SESSION}")`);
+  console.log(`webterm listening on http://${HOST}:${PORT}`);
   console.log('Reverse-proxy this with TLS (nginx) and open it in your browser.');
 });
 

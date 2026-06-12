@@ -2,9 +2,18 @@
 
 // Browser side of the web terminal.
 //
-// Output: one long-lived streaming fetch (GET /api/stream) read incrementally.
-// Input:  coalesced POST /api/input requests (keep-alive, ordered).
-// Resize: debounced POST /api/resize.
+// A page first shows a *lobby*: the list of running sessions to attach to, plus
+// a form to create a new one. Once attached, the page is bound to that one
+// session for its lifetime:
+//
+//   Output: one long-lived streaming fetch (GET /api/stream) read incrementally.
+//   Input:  coalesced POST /api/input requests (keep-alive, ordered).
+//   Resize: debounced POST /api/resize.
+//
+// When the session's program exits, we show a Restart button (recreates a fresh
+// session with the same id + command). Sessions are in-memory on the server: a
+// session that has exited is gone, so reloading a page whose session no longer
+// exists is a 404 and drops back to the lobby.
 //
 // The corporate proxy occasionally hijacks every request to this domain with an
 // HTML "acknowledge" page until the user clicks through it in the browser. We
@@ -14,7 +23,7 @@
 // without a full page reload (which would itself be hijacked).
 
 const MAGIC_PREFIX = '{"m":"WT1"';
-const SESSION = new URLSearchParams(location.search).get('session') || 'default';
+const ID_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 const INPUT_FLUSH_MS = 8;
 const RESIZE_DEBOUNCE_MS = 150;
 
@@ -25,6 +34,14 @@ const els = {
   overlayTitle: document.getElementById('overlay-title'),
   overlayBody: document.getElementById('overlay-body'),
   overlayActions: document.getElementById('overlay-actions'),
+  lobby: document.getElementById('lobby'),
+  lobbyList: document.getElementById('lobby-list'),
+  lobbyEmpty: document.getElementById('lobby-empty'),
+  lobbyCreate: document.getElementById('lobby-create'),
+  createCommand: document.getElementById('create-command'),
+  createId: document.getElementById('create-id'),
+  createError: document.getElementById('create-error'),
+  createBtn: document.getElementById('create-btn'),
 };
 
 // ---------------------------------------------------------------- token
@@ -57,7 +74,6 @@ const fitAddon = new FitAddon.FitAddon();
 term.loadAddon(fitAddon);
 term.open(els.terminal);
 fitAddon.fit();
-term.focus();
 
 // ---------------------------------------------------------------- status / overlay
 function setStatus(text, kind) {
@@ -95,16 +111,33 @@ function hideOverlay() {
   els.overlay.classList.add('hidden');
 }
 
+function setDocTitle(title) {
+  const label = title || currentSession || '';
+  document.title = label ? 'webterm — ' + label : 'webterm';
+}
+
 // ---------------------------------------------------------------- connection state
+let currentSession = null; // session id this page is attached to (null = lobby)
+let currentCommand = ''; // command of the attached session (for Restart)
 let abort = null; // AbortController for the active stream
 let connected = false; // stream is open and reading
 let connecting = false; // a connect() attempt is in flight (guards against overlap)
-let manualStop = false; // true when a nag was detected; suppress auto-reconnect
+let manualStop = false; // suppress auto-reconnect (nag / exit / showing lobby)
 let reconnectDelay = 1000;
 let reconnectTimer = null;
+let knownIds = new Set(); // ids from the last session list (for id-preview dedupe)
+
+function urlSession() {
+  return new URLSearchParams(location.search).get('session');
+}
 
 function api(path) {
-  return path + (path.includes('?') ? '&' : '?') + 'session=' + encodeURIComponent(SESSION);
+  const sep = path.includes('?') ? '&' : '?';
+  return path + sep + 'session=' + encodeURIComponent(currentSession || '');
+}
+
+function isOurs(text) {
+  return typeof text === 'string' && text.startsWith(MAGIC_PREFIX);
 }
 
 function nagDetected() {
@@ -133,15 +166,11 @@ function nagDetected() {
         onClick: () => {
           hideOverlay();
           manualStop = false;
-          connect();
+          resume();
         },
       },
     ]
   );
-}
-
-function showDisconnected(msg) {
-  setStatus('reconnecting…', 'warn');
 }
 
 function showAuthError() {
@@ -151,59 +180,364 @@ function showAuthError() {
   clearReconnect();
   if (abort) abort.abort();
   setStatus('unauthorized', 'err');
-  showOverlay(
-    'Unauthorized',
-    'The access token was rejected. Enter it again to continue.',
-    [
-      {
-        label: 'Enter token',
-        onClick: () => {
-          clearToken();
-          getToken();
-          hideOverlay();
-          manualStop = false;
-          connect();
-        },
+  showOverlay('Unauthorized', 'The access token was rejected. Enter it again to continue.', [
+    {
+      label: 'Enter token',
+      onClick: () => {
+        clearToken();
+        getToken();
+        hideOverlay();
+        manualStop = false;
+        resume();
       },
-    ]
-  );
+    },
+  ]);
 }
 
-function showSessionEnded(code) {
+// Resume after a recoverable interruption (nag / auth): reconnect to the
+// attached session, or re-open the lobby if we weren't attached.
+function resume() {
+  if (currentSession) connect();
+  else refreshAndRoute();
+}
+
+function showRestart(code) {
   setStatus('session ended', 'err');
+  const cmd = currentCommand ? ' (<code>' + escapeHtml(currentCommand) + '</code>)' : '';
   showOverlay(
     'Session ended',
-    'The shell exited (code ' + code + '). Start a fresh shell?',
+    'The program exited (code ' + code + '). Restart it with the same command' + cmd + '?',
     [
       {
-        label: 'Restart shell',
-        onClick: async () => {
-          try {
-            const r = await fetch(api('/api/restart'), {
-              method: 'POST',
-              headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
-              body: '{}',
-            });
-            const txt = await r.text();
-            if (!isOurs(txt)) return nagDetected();
-          } catch (e) {
-            /* fall through to reconnect */
-          }
-          term.reset();
-          hideOverlay();
-          connect();
-        },
+        label: 'Restart',
+        onClick: restartSession,
       },
     ]
   );
 }
 
-function isOurs(text) {
-  return typeof text === 'string' && text.startsWith(MAGIC_PREFIX);
+async function restartSession() {
+  setOverlayError('');
+  try {
+    const r = await fetch('/api/sessions', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
+      body: JSON.stringify({ id: currentSession, command: currentCommand }),
+    });
+    if (r.status === 401) return showAuthError();
+    const txt = await r.text();
+    if (!isOurs(txt)) return nagDetected();
+    const msg = JSON.parse(txt);
+    if (msg.ok || msg.error === 'exists') {
+      // Created, or someone already recreated this id — either way attach.
+      term.reset();
+      hideOverlay();
+      manualStop = false;
+      connect();
+      return;
+    }
+    setOverlayError(createErrorText(msg.error));
+  } catch (e) {
+    setOverlayError('Network error; try again.');
+  }
 }
 
-// ---------------------------------------------------------------- output stream
+function setOverlayError(text) {
+  // Append/replace a small error line inside the overlay body.
+  let line = els.overlayBody.querySelector('.err-text');
+  if (!text) {
+    if (line) line.remove();
+    return;
+  }
+  if (!line) {
+    line = document.createElement('p');
+    line.className = 'err-text';
+    els.overlayBody.appendChild(line);
+  }
+  line.textContent = text;
+}
+
+// ---------------------------------------------------------------- lobby
+function showLobby() {
+  manualStop = true;
+  connected = false;
+  connecting = false;
+  clearReconnect();
+  currentSession = null;
+  currentCommand = '';
+  setStatus('');
+  hideOverlay();
+  setDocTitle('');
+  els.lobby.classList.remove('hidden');
+  els.createCommand.focus();
+}
+
+function hideLobby() {
+  els.lobby.classList.add('hidden');
+}
+
+async function loadSessions() {
+  let r;
+  try {
+    r = await fetch('/api/sessions', { headers: authHeaders(), cache: 'no-store' });
+  } catch (e) {
+    return null; // network error; caller retries
+  }
+  if (r.status === 401) {
+    showAuthError();
+    return null;
+  }
+  const txt = await safeText(r);
+  if (!isOurs(txt)) {
+    nagDetected();
+    return null;
+  }
+  try {
+    return JSON.parse(txt);
+  } catch (e) {
+    return null;
+  }
+}
+
+// Fetch the session list and either attach (if the URL names a live session) or
+// show the lobby. The single entry point for (re)entering the lobby flow.
+async function refreshAndRoute() {
+  const data = await loadSessions();
+  if (!data) {
+    if (els.overlay.classList.contains('hidden')) {
+      // Pure network error (no nag/auth overlay shown): retry shortly.
+      setStatus('reconnecting…', 'warn');
+      setTimeout(refreshAndRoute, 1500);
+    }
+    return;
+  }
+  renderSessions(data.sessions || [], data.max || 0);
+  const want = urlSession();
+  if (want && (data.sessions || []).some((s) => s.id === want)) {
+    attach(want);
+  } else {
+    if (want) history.replaceState({}, '', location.pathname);
+    showLobby();
+  }
+}
+
+function renderSessions(sessions, max) {
+  knownIds = new Set(sessions.map((s) => s.id));
+  els.lobbyList.innerHTML = '';
+  els.lobbyEmpty.classList.toggle('hidden', sessions.length > 0);
+  for (const s of sessions) els.lobbyList.appendChild(sessionRow(s));
+
+  const atCapacity = max && sessions.length >= max;
+  els.createBtn.disabled = !!atCapacity;
+  if (atCapacity) {
+    setCreateError('At capacity (' + max + ' sessions). Kill one to create another.');
+  } else {
+    setCreateError('');
+  }
+  updateIdPreview();
+}
+
+function sessionRow(s) {
+  const li = document.createElement('li');
+  li.className = 'session-row';
+
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.title = 'Attach to ' + s.id;
+
+  const name = document.createElement('div');
+  name.className = 'name';
+  name.textContent = s.id;
+  if (s.title && s.title !== s.id) {
+    const t = document.createElement('span');
+    t.className = 'title';
+    t.textContent = ' — ' + s.title;
+    name.appendChild(t);
+  }
+
+  const sub = document.createElement('div');
+  sub.className = 'sub';
+  const viewers = s.viewers ? '  ·  ' + s.viewers + ' viewer' + (s.viewers === 1 ? '' : 's') : '';
+  sub.textContent = (s.command || '') + viewers;
+
+  meta.appendChild(name);
+  meta.appendChild(sub);
+  meta.addEventListener('click', () => attach(s.id));
+
+  const kill = document.createElement('button');
+  kill.className = 'secondary';
+  kill.textContent = 'Kill';
+  let armed = false;
+  let armTimer = null;
+  kill.addEventListener('click', () => {
+    if (!armed) {
+      armed = true;
+      kill.textContent = 'Confirm';
+      kill.className = 'danger';
+      armTimer = setTimeout(() => {
+        armed = false;
+        kill.textContent = 'Kill';
+        kill.className = 'secondary';
+      }, 3000);
+      return;
+    }
+    if (armTimer) clearTimeout(armTimer);
+    kill.disabled = true;
+    killSession(s.id);
+  });
+
+  li.appendChild(meta);
+  li.appendChild(kill);
+  return li;
+}
+
+async function killSession(id) {
+  try {
+    const r = await fetch('/api/sessions/close', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
+      body: JSON.stringify({ id }),
+    });
+    if (r.status === 401) return showAuthError();
+    const txt = await r.text();
+    if (!isOurs(txt)) return nagDetected();
+  } catch (e) {
+    /* ignore; refresh below reflects reality */
+  }
+  refreshLobby();
+}
+
+// Refresh just the lobby list (we are already in the lobby).
+async function refreshLobby() {
+  const data = await loadSessions();
+  if (!data) return;
+  renderSessions(data.sessions || [], data.max || 0);
+}
+
+function createErrorText(error) {
+  switch (error) {
+    case 'too-many':
+      return 'Server is at capacity. Kill a session and try again.';
+    case 'exists':
+      return 'That session id is already in use.';
+    case 'bad-id':
+      return 'Invalid session id (use letters, digits, _ . - ; up to 64).';
+    default:
+      return 'Could not create the session.';
+  }
+}
+
+function setCreateError(text) {
+  els.createError.textContent = text || '';
+  els.createError.classList.toggle('hidden', !text);
+}
+
+// Mirror the server's id derivation for the Advanced field placeholder.
+function deriveIdPreview(command) {
+  const cmd = (command || '').trim();
+  if (!cmd) return '';
+  const first = cmd.split(/\s+/)[0] || '';
+  let base = baseName(first).replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 60);
+  if (!base) return '';
+  if (!knownIds.has(base)) return base;
+  for (let n = 2; ; n++) {
+    const cand = base + '-' + n;
+    if (!knownIds.has(cand)) return cand;
+  }
+}
+
+function baseName(p) {
+  const trimmed = p.replace(/\/+$/, '');
+  const i = trimmed.lastIndexOf('/');
+  return i >= 0 ? trimmed.slice(i + 1) : trimmed;
+}
+
+function updateIdPreview() {
+  const preview = deriveIdPreview(els.createCommand.value);
+  els.createId.placeholder = preview || '(auto)';
+}
+
+async function createSession(command, idOverride) {
+  setCreateError('');
+  els.createBtn.disabled = true;
+  const body = { command };
+  if (idOverride) body.id = idOverride;
+  let r;
+  try {
+    r = await fetch('/api/sessions', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    els.createBtn.disabled = false;
+    setCreateError('Network error; try again.');
+    return;
+  }
+  if (r.status === 401) return showAuthError();
+  const txt = await safeText(r);
+  if (!isOurs(txt)) return nagDetected();
+  let msg;
+  try {
+    msg = JSON.parse(txt);
+  } catch (e) {
+    els.createBtn.disabled = false;
+    setCreateError('Unexpected server response.');
+    return;
+  }
+  if (!msg.ok) {
+    els.createBtn.disabled = false;
+    setCreateError(createErrorText(msg.error));
+    refreshLobby();
+    return;
+  }
+  els.createBtn.disabled = false;
+  els.createCommand.value = '';
+  els.createId.value = '';
+  attach(msg.session.id);
+}
+
+els.lobbyCreate.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const command = els.createCommand.value;
+  const idOverride = els.createId.value.trim();
+  if (idOverride && !ID_RE.test(idOverride)) {
+    setCreateError('Invalid session id (use letters, digits, _ . - ; up to 64).');
+    return;
+  }
+  createSession(command, idOverride);
+});
+els.createCommand.addEventListener('input', updateIdPreview);
+
+// ---------------------------------------------------------------- attach / output stream
+function attach(id) {
+  currentSession = id;
+  manualStop = false;
+  history.replaceState({}, '', '?session=' + encodeURIComponent(id));
+  hideLobby();
+  hideOverlay();
+  setDocTitle('');
+  fitAddon.fit();
+  term.focus();
+  connect();
+}
+
+// Drop the current session and return to the lobby (e.g. it was killed/exited
+// out from under us, so the stream 404s).
+function backToLobby() {
+  manualStop = true;
+  if (abort) abort.abort();
+  connected = false;
+  connecting = false;
+  clearReconnect();
+  currentSession = null;
+  currentCommand = '';
+  history.replaceState({}, '', location.pathname);
+  refreshAndRoute();
+}
+
 async function connect() {
+  if (!currentSession) return;
   // Guard against overlapping attempts: set `connecting` synchronously before
   // any await so a second call (e.g. a stale reconnect timer) bails out.
   if (connected || connecting) return;
@@ -213,7 +547,6 @@ async function connect() {
   hideOverlay();
   setStatus('connecting…', '');
 
-  // Tear down any previous stream before starting a new one.
   if (abort) {
     try {
       abort.abort();
@@ -248,27 +581,10 @@ async function connect() {
     connecting = false;
     return showAuthError();
   }
-  if (resp.status === 503) {
+  if (resp.status === 404) {
+    // Session no longer exists (exited or killed). Back to the lobby.
     connecting = false;
-    manualStop = true;
-    clearReconnect();
-    if (abort) abort.abort();
-    setStatus('at capacity', 'err');
-    showOverlay(
-      'Server at capacity',
-      'Too many terminal sessions are open on the server. Close some and reconnect.',
-      [
-        {
-          label: 'Reconnect',
-          onClick: () => {
-            hideOverlay();
-            manualStop = false;
-            connect();
-          },
-        },
-      ]
-    );
-    return;
+    return backToLobby();
   }
   if (!resp.ok || !resp.body) {
     // A non-OK response with HTML is almost certainly the nag page.
@@ -287,8 +603,6 @@ async function connect() {
   reconnectDelay = 1000;
   setStatus('connected', 'ok');
   setTimeout(() => setStatus(''), 1200);
-  // Re-sync size now that the session is guaranteed to exist (resize no longer
-  // creates sessions, so the pre-stream resize is a no-op for brand-new ones).
   sendResize(true);
 
   try {
@@ -298,7 +612,6 @@ async function connect() {
       buf += decoder.decode(value, { stream: true });
 
       if (!gotMagic) {
-        // Tolerate the prefix arriving across multiple chunks.
         if (buf.length < MAGIC_PREFIX.length) {
           if (!MAGIC_PREFIX.startsWith(buf)) {
             connected = false;
@@ -339,27 +652,26 @@ function handleFrame(line) {
 
   switch (msg.t) {
     case 'hello':
+      currentCommand = typeof msg.command === 'string' ? msg.command : currentCommand;
+      setDocTitle(msg.title || '');
       // Fresh view of an existing session: clear and let the snapshot repaint.
       term.reset();
       break;
     case 'o':
       term.write(b64ToStr(msg.d));
       break;
+    case 'title':
+      setDocTitle(msg.title || '');
+      break;
     case 'k':
       break; // keepalive
-    case 'bye':
-      // Server is replacing this session (e.g. restart). Drop and reconnect to
-      // the new one; aborting ends the read loop, which schedules a reconnect.
-      reconnectDelay = 1000;
-      if (abort) abort.abort();
-      break;
     case 'exit':
       connected = false;
       connecting = false;
       manualStop = true;
       clearReconnect();
       if (abort) abort.abort();
-      showSessionEnded(msg.code);
+      showRestart(msg.code);
       break;
     default:
       break;
@@ -367,9 +679,9 @@ function handleFrame(line) {
 }
 
 function scheduleReconnect() {
-  if (manualStop || connected || connecting) return;
+  if (manualStop || connected || connecting || !currentSession) return;
   clearReconnect();
-  showDisconnected();
+  setStatus('reconnecting…', 'warn');
   reconnectTimer = setTimeout(connect, reconnectDelay);
   reconnectDelay = Math.min(reconnectDelay * 2, 15000);
 }
@@ -397,6 +709,7 @@ let inputTimer = null;
 let inputInFlight = false;
 
 term.onData((data) => {
+  if (!currentSession) return;
   inputBuf += data;
   scheduleFlush();
 });
@@ -424,7 +737,7 @@ function flushInput() {
 }
 
 async function sendInput(payload) {
-  if (manualStop) return;
+  if (manualStop || !currentSession) return;
   try {
     const r = await fetch(api('/api/input'), {
       method: 'POST',
@@ -433,11 +746,11 @@ async function sendInput(payload) {
       body: JSON.stringify({ d: strToB64(payload) }),
     });
     if (r.status === 401) return showAuthError();
+    if (r.status === 404) return; // session gone; the stream loop handles the return-to-lobby
     const txt = await r.text();
     if (!isOurs(txt)) return nagDetected();
   } catch (e) {
-    // Network blip: the output stream's reconnect logic will recover; the key
-    // press is lost but the user is about to stop anyway if this was the nag.
+    /* network blip; the output stream's reconnect logic recovers */
   }
 }
 
@@ -450,6 +763,7 @@ function scheduleResize() {
 }
 
 async function sendResize(silent) {
+  if (!currentSession) return;
   const dims = { cols: term.cols, rows: term.rows };
   try {
     const r = await fetch(api('/api/resize'), {
@@ -461,6 +775,7 @@ async function sendResize(silent) {
       if (!silent) showAuthError();
       return;
     }
+    if (r.status === 404) return;
     const txt = await r.text();
     if (!isOurs(txt) && !silent) nagDetected();
   } catch (e) {
@@ -487,6 +802,12 @@ function b64ToStr(b64) {
   return new TextDecoder('utf-8').decode(bytes);
 }
 
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
 async function safeText(resp) {
   try {
     return await resp.text();
@@ -496,4 +817,5 @@ async function safeText(resp) {
 }
 
 // ---------------------------------------------------------------- go
-connect();
+getToken();
+refreshAndRoute();
