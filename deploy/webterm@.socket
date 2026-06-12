@@ -1,0 +1,41 @@
+# Socket-activation unit for one webterm slot. This is a *template*: the
+# instance name (%i) is the slot id. nginx routes webterm.example.com/<id>/ to
+# the matching socket (see nginx.conf.sample).
+#
+# Install (slots 0..7):
+#   sudo cp deploy/webterm@.socket deploy/webterm@.service /etc/systemd/system/
+#   sudo cp deploy/webterm.tmpfiles.conf /etc/tmpfiles.d/webterm.conf
+#   sudo systemd-tmpfiles --create /etc/tmpfiles.d/webterm.conf
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now webterm@{0,1,2,3,4,5,6,7}.socket
+#
+# systemd listens on the unix socket below at boot (near-zero cost). The first
+# connection starts webterm@%i.service and hands it this already-listening
+# socket as a file descriptor; that one process accepts every connection for
+# the slot (Accept=no, the default). When the shell exits, the service exits
+# and goes inactive — this socket stays armed and re-activates a fresh process
+# on the next request.
+
+[Unit]
+Description=webterm slot %i socket
+
+[Socket]
+# Unix socket per slot. /run/webterm is created by webterm.tmpfiles.conf.
+ListenStream=/run/webterm/%i.sock
+# Remove the socket file when the socket unit stops.
+RemoveOnStop=yes
+# Let nginx (adjust to your nginx user/group) connect; the service receives the
+# socket as an fd regardless, so its own user needs no filesystem access here.
+SocketUser=root
+SocketGroup=www-data
+SocketMode=0660
+# Accept=no (default): one service instance handles all connections on this
+# socket, so the stream/input/resize requests all reach the same shell.
+Accept=no
+# If activation keeps failing (e.g. nginx retrying against a buggy service),
+# stop re-triggering after a burst instead of looping forever.
+TriggerLimitIntervalSec=10s
+TriggerLimitBurst=10
+
+[Install]
+WantedBy=sockets.target

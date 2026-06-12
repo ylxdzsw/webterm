@@ -10,9 +10,11 @@ front of it, and open it in regular Chrome on a locked-down work PC. You get a
 full interactive terminal — including TUI apps like `opencode`, `claude code`,
 `vim`, `htop` — that keeps running when the browser disconnects.
 
-The server can host **several independent sessions** at once. Each page is a
-**lobby** first: it lists the running sessions to attach to and lets you create
-a new one, then binds itself to the session you pick.
+**One server process = one shell.** The server launches a single program (your
+shell by default) on startup; the page is a disposable view of it. When that
+program exits, the server process exits too. Multiple independent terminals are
+provided by running **several instances behind nginx + systemd socket
+activation** (see *Deploy*), not by an in-process session registry.
 
 ## Why this design
 
@@ -20,45 +22,49 @@ This is **not** web SSH. SSH-over-HTTP tunneling exists to carry a byte stream
 to a *remote* host; here the host you want a shell on *is* the web server, and
 you only need an interactive shell. So we skip SSH entirely:
 
-- The server runs each shell/TUI in its own **PTY**.
-- A server-side **headless xterm.js** per session continuously consumes the PTY
-  output and tracks the full screen state (colors, cursor, modes, scrollback).
+- The server runs the shell/TUI in its own **PTY**.
+- A server-side **headless xterm.js** continuously consumes the PTY output and
+  tracks the full screen state (colors, cursor, modes, scrollback).
 - The browser is a **disposable view**. On every (re)connect the server replays
   a **serialized screen snapshot**, then streams live output. One clean resume
   path, no terminal-mode desync.
 - Persistence lives in the **server process itself**: browser disconnects never
-  touch the PTY, and sessions keep running with no browser attached. A session
-  ends only when its program exits or you kill it. (Trade-off: restarting the
-  *server* loses all sessions — see below. We intentionally don't use
-  tmux/dtach.)
+  touch the PTY, and the shell keeps running with no browser attached. The
+  session ends only when the program exits — and then the process exits with it.
 
-### Sessions & the lobby
+### Lifecycle (shell ↔ process ↔ systemd)
 
-- Opening the app with no `?session=` shows the **lobby**: the live sessions
-  (labelled by id and by the program's terminal title) plus a **New session**
-  form. "Advanced" lets you set the program to launch and a custom session id.
-- A new session id defaults to the program name plus a sequence number
-  (`bash`, `bash-2`, …). The launch command is parsed by `/bin/sh` (so quoting
-  works) and `exec`'d, so your program is the PTY's foreground process.
-- Opening `?session=<id>` attaches straight to that session. If it doesn't
-  exist (it exited, was killed, or the server restarted), you get the lobby.
-- When a session's program **exits**, the attached page shows a **Restart**
-  button that recreates a fresh session with the same id + command. An exited
-  session is gone on the server, so reloading a dead session lands in the lobby.
-- The lobby's **Kill** button (two clicks to confirm) terminates a session and
-  its whole process group.
+The server owns exactly one PTY. When the program in it exits, the server calls
+`process.exit`. Run under systemd socket activation, this gives:
+
+- **Reliable cleanup.** The unit uses `KillMode=control-group`, so when the
+  process exits, systemd reaps the entire cgroup — backgrounded jobs and any
+  daemons the shell forked included. This is more thorough than signalling a
+  process group from inside the app.
+- **Near-zero idle cost.** A slot that has no live shell is just a systemd
+  socket being listened on; there is no Node process. The first request starts
+  one; the shell exiting tears it back down.
+- **No restart loop.** The service is `Restart=no`: after the shell exits it
+  stays inactive until the next request re-activates it. `StartLimit*` (service)
+  and `TriggerLimit*` (socket) bound the worst case if activation ever fails in
+  a loop.
+
+Browser disconnects do **not** end the session — only the program exiting does.
+When it exits the attached page shows a **Reload** button; reloading hits the
+socket again and (under socket activation) gets a fresh shell.
 
 ### Transport (WebSocket-free)
 
-Two half-duplex HTTP/1.1 channels per attached session, plus a small session
-registry:
+Two half-duplex HTTP/1.1 channels per page:
 
 | Channel | Request | Purpose |
 | --- | --- | --- |
-| List/create/kill | `GET`/`POST /api/sessions`, `POST /api/sessions/close` | lobby: enumerate, create, kill sessions |
-| Output | `GET /api/stream?session=<id>` (long-lived chunked response) | snapshot + live PTY output |
-| Input  | `POST /api/input?session=<id>` (coalesced, keep-alive) | keystrokes |
-| Resize | `POST /api/resize?session=<id>` | terminal size → PTY `SIGWINCH` |
+| Output | `GET api/stream` (long-lived chunked response) | snapshot + live PTY output |
+| Input  | `POST api/input` (coalesced, keep-alive) | keystrokes |
+| Resize | `POST api/resize` | terminal size → PTY `SIGWINCH` |
+
+URLs are **relative** to the page, so the same client works whether it is served
+at `/` (local) or under a `/<slot>/` prefix (behind nginx).
 
 Every legitimate message is one line of JSON beginning with `{"m":"WT1"`. The
 proxy's reminder page is HTML, so the client detects a hijack by checking that
@@ -66,30 +72,52 @@ prefix. When detected, it **stops and shows instructions + a Reconnect button**:
 acknowledge the page in another tab, then click Reconnect — no page reload
 needed (the app stays in memory), and your session is intact.
 
-## Quick start (local)
+## Quick start (local, no systemd/nginx)
 
 ```bash
 npm install
 WEBTERM_TOKEN=$(openssl rand -base64 24) npm start
-# open the printed URL, paste the token when prompted
+# open the printed URL (http://127.0.0.1:8080), paste the token when prompted
 ```
 
-Without `WEBTERM_TOKEN` the server generates and prints a one-off token.
+Without `WEBTERM_TOKEN` the server generates and prints a one-off token. In this
+mode there is no multi-session and no cgroup-based cleanup — it is a single shell
+served at `/`, intended for local use and development.
 
-## Deploy
+## Deploy (systemd socket activation + nginx, multi-session)
+
+Multiple terminals come from running several socket-activated instances, one per
+slot id, routed by nginx. The templates live in `deploy/`.
 
 1. Copy the repo to the server (e.g. `/opt/webterm`), run `npm install --omit=dev`.
-2. Set a strong `WEBTERM_TOKEN` (see `.env.example`).
-3. Install the systemd unit: `deploy/webterm.service`.
-4. Front it with TLS using `deploy/nginx.conf.sample` — **the important bit is
-   `proxy_buffering off` on `/api/stream`** so output flushes in real time.
-5. Open `https://your-domain/` in Chrome on the work PC and paste your token.
+2. Set a strong `WEBTERM_TOKEN` (shared by all slots) — see `.env.example` and
+   the `webterm@.service` template.
+3. Install the units and the socket directory:
+   ```bash
+   sudo cp deploy/webterm@.socket deploy/webterm@.service /etc/systemd/system/
+   sudo cp deploy/webterm.tmpfiles.conf /etc/tmpfiles.d/webterm.conf
+   sudo systemd-tmpfiles --create /etc/tmpfiles.d/webterm.conf
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now webterm@{0,1,2,3,4,5,6,7}.socket
+   ```
+   Edit `User=`, `WorkingDirectory=`, and the token in `webterm@.service` first.
+4. Front it with TLS using `deploy/nginx.conf.sample`. It routes
+   `https://your-domain/<id>/…` to `/run/webterm/<id>.sock` (stripping the
+   prefix) and redirects `/` → `/0/`. The important bits are `proxy_buffering
+   off` and the relative-URL prefix handling.
+5. Open `https://your-domain/` (or `/3/` for slot 3) in Chrome on the work PC
+   and paste your token.
+
+Each slot is fully independent: its own shell, its own cgroup, started on first
+use and gone when its shell exits. To change the number of slots, edit the
+`[0-7]` ranges in `nginx.conf.sample` and the `enable` instance list.
 
 ## Configuration
 
-See `.env.example`. Common knobs: `WEBTERM_TOKEN`, `WEBTERM_PORT`,
-`WEBTERM_CMD` / `WEBTERM_ARGS` (the default program a new session runs when no
-command is given in the lobby), `WEBTERM_MAX_SESSIONS`, `WEBTERM_KEEPALIVE_MS`.
+See `.env.example`. Common knobs: `WEBTERM_TOKEN`, `WEBTERM_HOST` /
+`WEBTERM_PORT` (only used without socket activation), `WEBTERM_CMD` /
+`WEBTERM_ARGS` (the single program the server runs), `WEBTERM_CWD`,
+`WEBTERM_SCROLLBACK`, `WEBTERM_KEEPALIVE_MS`.
 
 ## TUI notes
 
@@ -100,19 +128,16 @@ paste are passed through by xterm.js.
 
 ## Limitations / trade-offs
 
-- **Server restart loses all sessions.** Persistence is in-process by design (no
-  tmux/dtach). Run under systemd with `Restart=on-failure`, keep the server
-  stable, and avoid needless redeploys. If you later need to survive restarts,
-  wrap the child in `dtach`/`abduco` behind the same backend.
+- **A process restart loses that slot's session.** Persistence is in-process by
+  design (no tmux/dtach). The shell only survives as long as its server process,
+  which is exactly the lifecycle we want here.
 - **No end-to-end secrecy from the proxy.** The MITM proxy can read the session
   in plaintext. This tool targets *approved, monitored* use where that is
   acceptable; it only works around the technical transport restrictions.
 - Interactive latency is roughly one proxy round-trip per keystroke (fine for a
   shell and most TUIs). Throughput is not meant for large file transfers.
 - One screen size per session (single active viewport). Multiple tabs attached
-  to the *same* session will fight over the size.
-- Anyone with the token can launch an arbitrary program via the lobby — this is
-  the same trust boundary as the shell itself (see Security).
+  to the *same* slot will fight over the size.
 
 ## Security
 
@@ -121,13 +146,11 @@ This exposes a shell to anyone with the URL and token, so:
 - **Set a strong `WEBTERM_TOKEN`.** Generate it with `openssl rand -base64 32`.
   If `WEBTERM_TOKEN` is set but empty or a known placeholder, the server refuses
   to start (fail closed). If it is left entirely unset, a random one-off token
-  is generated and printed (local use only).
+  is generated and printed (local use only). All slots share this one token.
 - The token is sent **only via the `Authorization: Bearer` header** — it is
   never accepted as a `?token=` query parameter (which would leak into proxy
   logs, history, and Referer headers).
 - Serve only over TLS and consider additional restrictions (nginx allow-list,
   basic auth) at the proxy layer.
-- The lobby lets a token holder start any program (Advanced → Command). This is
-  no more privileged than the shell the token already grants, but be aware the
-  token is the only thing gating it.
-- Concurrent sessions are capped by `WEBTERM_MAX_SESSIONS` (default 8).
+- Per-slot unix sockets are gated by filesystem permissions
+  (`SocketUser`/`SocketGroup`/`SocketMode`); only nginx needs connect access.

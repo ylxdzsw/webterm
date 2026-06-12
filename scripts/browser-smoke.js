@@ -1,12 +1,14 @@
 'use strict';
 
 // Headless-Chrome smoke test for the frontend. Not part of the app; used to
-// validate that the UI loads without errors, connects, sends input, and renders
-// live output. Run with the server up on 127.0.0.1:8080 and WEBTERM_TOKEN=testtoken.
+// validate that the UI loads without errors, connects to the single shell,
+// sends input, and renders live output. Run with the server up on
+// 127.0.0.1:8080 and WEBTERM_TOKEN=testtoken.
 
 const puppeteer = require('puppeteer-core');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
+const BASE = URL.replace(/\/$/, '');
 const TOKEN = process.env.SMOKE_TOKEN || 'testtoken';
 const CHROME =
   process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
@@ -37,16 +39,11 @@ const CHROME =
   }, TOKEN);
 
   await page.goto(URL, { waitUntil: 'domcontentloaded' });
-  // Lobby should appear (no ?session= in the URL). Create a new session.
-  await page.waitForSelector('#create-btn', { visible: true });
-  await new Promise((r) => setTimeout(r, 300));
-  await page.click('#create-btn');
-  // Wait until we're attached (URL gains ?session=) and the snapshot paints.
-  await page.waitForFunction(() => new URLSearchParams(location.search).has('session'), {
-    timeout: 5000,
-  });
-  const sessionId = await page.evaluate(() =>
-    new URLSearchParams(location.search).get('session')
+  // No lobby: the page attaches directly to the one shell. Wait for the stream
+  // to open and the snapshot to paint.
+  await page.waitForFunction(
+    () => document.querySelector('.xterm-rows') != null,
+    { timeout: 5000 }
   );
   await new Promise((r) => setTimeout(r, 1500));
 
@@ -55,12 +52,7 @@ const CHROME =
   await page.keyboard.type('echo ' + marker + '\n');
   await new Promise((r) => setTimeout(r, 1200));
 
-  // Read what xterm has rendered via its accessibility/serialize path. xterm
-  // doesn't expose buffer globally, so we scrape the live DOM text the renderer
-  // mirrors, falling back to the active buffer if exposed.
   const screenHasMarker = await page.evaluate((mk) => {
-    // xterm renders to canvas; use the underlying buffer through the public
-    // Terminal if the app exposed it, else scan the DOM text content.
     const text = document.querySelector('.xterm-rows')
       ? document.querySelector('.xterm-rows').innerText
       : document.body.innerText;
@@ -73,16 +65,12 @@ const CHROME =
   });
 
   // Independently confirm the command actually ran in the PTY by re-reading the
-  // server snapshot.
+  // server snapshot (no session id — there is only one shell).
   let snapshotHasMarker = false;
   try {
-    const res = await fetch(
-      'http://127.0.0.1:8080/api/stream?session=' + encodeURIComponent(sessionId),
-      {
-        headers: { Authorization: 'Bearer ' + TOKEN },
-      }
-    );
-    // read a little of the stream
+    const res = await fetch(BASE + '/api/stream', {
+      headers: { Authorization: 'Bearer ' + TOKEN },
+    });
     const reader = res.body.getReader();
     const dec = new TextDecoder();
     let buf = '';
