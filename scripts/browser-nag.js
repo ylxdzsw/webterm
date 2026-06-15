@@ -29,7 +29,11 @@ const NAG_HTML =
   page.on('request', (req) => {
     // The first authed calls on load are /api/resize then /api/stream; hijack
     // them with the nag page (status 200, text/html) like the proxy would.
-    if (req.url().includes('/api/stream') || req.url().includes('/api/resize')) {
+    if (
+      req.url().includes('/api/stream') ||
+      req.url().includes('/api/resize') ||
+      req.url().includes('/api/input')
+    ) {
       req.respond({
         status: 200,
         contentType: 'text/html; charset=utf-8',

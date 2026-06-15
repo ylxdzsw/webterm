@@ -7,7 +7,7 @@
 // server runs one program, and this page is a disposable view of it.
 //
 //   Output: one long-lived streaming fetch (GET api/stream) read incrementally.
-//   Input:  coalesced POST api/input requests (keep-alive, ordered).
+//   Input:  coalesced POST api/input requests (raw UTF-8 body, keep-alive, ordered).
 //   Resize: debounced POST api/resize.
 //
 // All API URLs are *relative* to the page. Served directly (local dev) the page
@@ -20,16 +20,22 @@
 // spawns a fresh shell. Browser disconnects do not end the session: while the
 // program runs the server keeps it alive and reconnects replay a snapshot.
 //
-// The corporate proxy occasionally hijacks every request to this domain with an
-// HTML "acknowledge" page until the user clicks through it in the browser. We
-// detect that by checking that responses begin with the magic prefix; if not,
-// we stop and show instructions plus a Reconnect button. Because the app stays
-// loaded in memory, the user can acknowledge in another tab and reconnect
-// without a full page reload (which would itself be hijacked).
+// The corporate proxy intercepts outbound API calls and *replaces the response*
+// with an HTML "acknowledge" page until the user clicks through. Detection is
+// entirely on the client: every legitimate reply begins with MAGIC_PREFIX; if
+// the bytes we receive are HTML (or anything else), we stop and show Reconnect.
 
 const MAGIC_PREFIX = '{"m":"WT1"';
 const INPUT_FLUSH_MS = 8;
+// Keystrokes: flush after INPUT_FLUSH_MS idle, or at least every INPUT_BURST_MAX_MS
+// during continuous typing (whichever comes first).
+const INPUT_BURST_MAX_MS = 33;
+// Motion-only SGR reports: leading-edge flush at this interval during drag/hover.
+const MOUSE_MOTION_FLUSH_MS = 33;
 const RESIZE_DEBOUNCE_MS = 150;
+
+// SGR mouse: ESC [ < Pb ; Px ; Py M|m  (1006/1016). Pb has bit 5 set on MOVE.
+const SGR_MOUSE_RE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])/;
 
 const els = {
   terminal: document.getElementById('terminal'),
@@ -123,6 +129,33 @@ function isOurs(text) {
   return typeof text === 'string' && text.startsWith(MAGIC_PREFIX);
 }
 
+// The proxy replaces API *responses* with HTML. Legitimate replies are JSON
+// lines that begin with MAGIC_PREFIX (any HTTP status).
+async function checkClientResponse(resp, opts) {
+  const silent = opts && opts.silent;
+  const text = await safeText(resp);
+  if (!isOurs(text)) {
+    if (!silent) nagDetected();
+    return false;
+  }
+  let msg;
+  try {
+    msg = JSON.parse(text);
+  } catch (e) {
+    if (!silent) nagDetected();
+    return false;
+  }
+  if (!msg || msg.m !== 'WT1') {
+    if (!silent) nagDetected();
+    return false;
+  }
+  if (resp.status === 401) {
+    if (!silent) showAuthError();
+    return false;
+  }
+  return { status: resp.status, msg };
+}
+
 function nagDetected() {
   manualStop = true;
   connected = false;
@@ -133,7 +166,7 @@ function nagDetected() {
   const here = location.href;
   showOverlay(
     'Corporate reminder page detected',
-    'A request was hijacked by the network acknowledgement page. To continue:' +
+    'A response was replaced by the network acknowledgement page. To continue:' +
       '<ol>' +
       '<li>Open <a href="' +
       here +
@@ -235,10 +268,12 @@ async function connect() {
 
   if (resp.status === 401) {
     connecting = false;
+    const txt = await safeText(resp);
+    if (!isOurs(txt)) return nagDetected();
     return showAuthError();
   }
   if (!resp.ok || !resp.body) {
-    // A non-OK response with HTML is almost certainly the nag page.
+    // Non-OK or empty body: the replacement page is usually HTML, not our stream.
     connecting = false;
     const txt = await safeText(resp);
     if (!isOurs(txt)) return nagDetected();
@@ -355,33 +390,125 @@ function clearReconnect() {
 // also preserves keystroke ordering without input sequence numbers, even if
 // the proxy/connection pool would otherwise reorder concurrent requests.
 let inputBuf = '';
-let inputTimer = null;
+let inputMotionTimer = null;
+let inputIdleTimer = null;
+let inputBurstTimer = null;
 let inputInFlight = false;
+
+function clearInputTimers() {
+  if (inputMotionTimer != null) {
+    clearTimeout(inputMotionTimer);
+    inputMotionTimer = null;
+  }
+  if (inputIdleTimer != null) {
+    clearTimeout(inputIdleTimer);
+    inputIdleTimer = null;
+  }
+  if (inputBurstTimer != null) {
+    clearTimeout(inputBurstTimer);
+    inputBurstTimer = null;
+  }
+}
 
 term.onData((data) => {
   inputBuf += data;
+  inputBuf = compactMouseMotion(inputBuf);
   scheduleFlush();
 });
+
+function isSgrMotion(seq) {
+  const m = SGR_MOUSE_RE.exec(seq);
+  if (!m) return false;
+  return (parseInt(m[1], 10) & 32) !== 0 && m[4] === 'M';
+}
+
+function isMotionOnlyPending() {
+  return inputBuf.length > 0 && isSgrMotion(inputBuf);
+}
+
+// Drop redundant intermediate positions from a run of SGR motion reports.
+// Clicks, releases, and wheel events are left intact.
+function compactMouseMotion(buf) {
+  if (buf.indexOf('\x1b[<') < 0) return buf;
+  let out = '';
+  let i = 0;
+  while (i < buf.length) {
+    const start = buf.indexOf('\x1b[<', i);
+    if (start < 0) {
+      out += buf.slice(i);
+      break;
+    }
+    out += buf.slice(i, start);
+    const rest = buf.slice(start);
+    const m = SGR_MOUSE_RE.exec(rest);
+    if (!m) {
+      out += buf[start];
+      i = start + 1;
+      continue;
+    }
+    const seq = m[0];
+    if (!isSgrMotion(seq)) {
+      out += seq;
+      i = start + seq.length;
+      continue;
+    }
+    const pb = m[1];
+    let last = seq;
+    let j = start + seq.length;
+    while (j < buf.length) {
+      const nm = SGR_MOUSE_RE.exec(buf.slice(j));
+      if (!nm || nm[1] !== pb || !isSgrMotion(nm[0])) break;
+      last = nm[0];
+      j += nm[0].length;
+    }
+    out += last;
+    i = j;
+  }
+  return out;
+}
 
 function scheduleFlush() {
   // While a POST is in flight, just accumulate; the in-flight request's
   // completion handler will drain whatever piled up in one follow-up POST.
-  if (inputInFlight || inputTimer != null) return;
-  // A tiny debounce still coalesces simultaneous keystrokes (e.g. a paste or
-  // an escape sequence) into the first batch even on a zero-latency link.
-  inputTimer = setTimeout(flushInput, INPUT_FLUSH_MS);
+  if (inputInFlight) return;
+  if (isMotionOnlyPending()) {
+    if (inputIdleTimer != null || inputBurstTimer != null) {
+      if (inputIdleTimer != null) {
+        clearTimeout(inputIdleTimer);
+        inputIdleTimer = null;
+      }
+      if (inputBurstTimer != null) {
+        clearTimeout(inputBurstTimer);
+        inputBurstTimer = null;
+      }
+    }
+    if (inputMotionTimer != null) return;
+    inputMotionTimer = setTimeout(flushInput, MOUSE_MOTION_FLUSH_MS);
+    return;
+  }
+  if (inputMotionTimer != null) {
+    clearTimeout(inputMotionTimer);
+    inputMotionTimer = null;
+  }
+  // Hybrid: 8ms idle (trailing) or 33ms from first key in burst (leading cap).
+  if (inputBurstTimer == null) {
+    inputBurstTimer = setTimeout(flushInput, INPUT_BURST_MAX_MS);
+  }
+  if (inputIdleTimer != null) clearTimeout(inputIdleTimer);
+  inputIdleTimer = setTimeout(flushInput, INPUT_FLUSH_MS);
 }
 
 function flushInput() {
-  inputTimer = null;
+  clearInputTimers();
   if (inputInFlight || !inputBuf) return;
+  inputBuf = compactMouseMotion(inputBuf);
   const payload = inputBuf;
   inputBuf = '';
   inputInFlight = true;
   sendInput(payload).finally(() => {
     inputInFlight = false;
     // Anything typed during the round-trip is now coalesced into one POST.
-    if (inputBuf) flushInput();
+    if (inputBuf) scheduleFlush();
   });
 }
 
@@ -390,14 +517,14 @@ async function sendInput(payload) {
   try {
     const r = await fetch('api/input', {
       method: 'POST',
-      headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
+      headers: Object.assign(
+        { 'Content-Type': 'application/octet-stream; charset=utf-8' },
+        authHeaders()
+      ),
       keepalive: false,
-      body: JSON.stringify({ d: strToB64(payload) }),
+      body: new TextEncoder().encode(payload),
     });
-    if (r.status === 401) return showAuthError();
-    if (r.status === 409) return; // session ended; the stream loop shows Reload
-    const txt = await r.text();
-    if (!isOurs(txt)) return nagDetected();
+    await checkClientResponse(r);
   } catch (e) {
     /* network blip; the output stream's reconnect logic recovers */
   }
@@ -419,13 +546,7 @@ async function sendResize(silent) {
       headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
       body: JSON.stringify(dims),
     });
-    if (r.status === 401) {
-      if (!silent) showAuthError();
-      return;
-    }
-    if (r.status === 409) return;
-    const txt = await r.text();
-    if (!isOurs(txt) && !silent) nagDetected();
+    await checkClientResponse(r, { silent });
   } catch (e) {
     /* ignore; stream reconnect handles recovery */
   }
@@ -433,16 +554,7 @@ async function sendResize(silent) {
 
 window.addEventListener('resize', scheduleResize);
 
-// ---------------------------------------------------------------- base64 (UTF-8 safe)
-function strToB64(s) {
-  const bytes = new TextEncoder().encode(s);
-  let bin = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(bin);
-}
+// ---------------------------------------------------------------- base64 (UTF-8 safe, output stream only)
 function b64ToStr(b64) {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);

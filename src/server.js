@@ -206,18 +206,24 @@ app.get('/api/stream', auth, (req, res) => {
   });
 });
 
-// --- Input channel: short POSTs carrying base64(UTF-8) keystrokes. The browser
-// reuses the connection (keep-alive) and coalesces rapid keystrokes.
-app.post('/api/input', auth, express.json({ limit: '1mb' }), (req, res) => {
+// --- Input channel: short POSTs carrying raw UTF-8 bytes. The browser reuses the
+// connection (keep-alive) and coalesces rapid keystrokes / mouse motion.
+app.post('/api/input', auth, express.raw({ type: 'application/octet-stream', limit: '1mb' }), (req, res) => {
   if (session.ended) {
     return res
       .status(409)
       .type('application/json')
       .send(frame({ t: 'ack', ok: false, error: 'ended' }));
   }
-  const d = req.body && req.body.d;
-  if (typeof d === 'string' && d.length) {
-    session.write(Buffer.from(d, 'base64').toString('utf8'));
+  const ct = req.get('content-type') || '';
+  if (!ct.includes('application/octet-stream')) {
+    return res
+      .status(415)
+      .type('application/json')
+      .send(frame({ t: 'ack', ok: false, error: 'unsupported media type' }));
+  }
+  if (Buffer.isBuffer(req.body) && req.body.length) {
+    session.write(req.body.toString('utf8'));
   }
   res.type('application/json').send(frame({ t: 'ack', ok: true, seq: session.bytes }));
 });
