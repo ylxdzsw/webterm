@@ -77,6 +77,39 @@ term.loadAddon(fitAddon);
 term.open(els.terminal);
 fitAddon.fit();
 
+// Ctrl+C copies when text is selected, then clears selection; a second Ctrl+C
+// sends SIGINT. Ctrl+V uses the browser paste event (bracketed paste, etc.).
+// Cmd+C on macOS is handled by xterm's native copy listener.
+function copyTerminalSelection() {
+  if (!term.hasSelection()) return false;
+  const textarea = term.element.querySelector('.xterm-helper-textarea');
+  if (!textarea) return false;
+  const saved = textarea.value;
+  textarea.value = term.getSelection();
+  textarea.select();
+  document.execCommand('copy');
+  textarea.value = saved;
+  term.clearSelection();
+  return true;
+}
+
+term.attachCustomKeyEventHandler((ev) => {
+  if (ev.type !== 'keydown') return true;
+
+  const ctrlOnly = ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey;
+
+  if (ctrlOnly && ev.code === 'KeyC' && copyTerminalSelection()) {
+    ev.preventDefault();
+    return false;
+  }
+
+  if (ctrlOnly && ev.code === 'KeyV') {
+    return false;
+  }
+
+  return true;
+});
+
 // ---------------------------------------------------------------- status / overlay
 function setStatus(text, kind) {
   if (!text) {
