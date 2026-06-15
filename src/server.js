@@ -129,8 +129,6 @@ app.use(
   express.static(path.join(__dirname, '..', 'node_modules', '@xterm', 'addon-fit', 'lib', 'addon-fit.js'))
 );
 
-app.get('/favicon.ico', (req, res) => res.status(204).end());
-
 app.get('/api/health', (req, res) => {
   res.type('application/json').send(frame({ t: 'health', ok: true }));
 });

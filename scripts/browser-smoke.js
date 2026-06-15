@@ -47,6 +47,25 @@ const CHROME =
   );
   await new Promise((r) => setTimeout(r, 1500));
 
+  // Title fallback: clearing the PTY title via OSC 0 should make the tab
+  // show the default "Webterm" title.
+  await page.keyboard.type("printf '\\033]0;\\007'; sleep 1.5\n");
+  await new Promise((r) => setTimeout(r, 800));
+  const clearedTitle = await page.evaluate(() => document.title);
+  if (clearedTitle !== 'Webterm') {
+    errors.push('cleared title is ' + JSON.stringify(clearedTitle) + ', expected "Webterm"');
+  }
+
+  // Title passthrough: a PTY title set via OSC 0 must be shown raw, with no
+  // "Webterm — " prefix.
+  const ptyTitle = 'WEBTERM_PTY_TITLE_' + Date.now();
+  await page.keyboard.type("printf '\\033]0;" + ptyTitle + "\\007'; sleep 1.5\n");
+  await new Promise((r) => setTimeout(r, 800));
+  const observedTitle = await page.evaluate(() => document.title);
+  if (observedTitle !== ptyTitle) {
+    errors.push('pty title is ' + JSON.stringify(observedTitle) + ', expected ' + JSON.stringify(ptyTitle));
+  }
+
   // Type a command that produces a unique marker.
   const marker = 'PUPPETEER_OK_' + Date.now();
   await page.keyboard.type('echo ' + marker + '\n');

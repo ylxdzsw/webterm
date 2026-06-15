@@ -147,7 +147,7 @@ function hideOverlay() {
 }
 
 function setDocTitle(title) {
-  document.title = title ? 'webterm — ' + title : 'webterm';
+  document.title = title || 'Webterm';
 }
 
 // ---------------------------------------------------------------- connection state
