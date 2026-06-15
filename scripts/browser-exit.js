@@ -52,8 +52,7 @@ const CHROME =
         title &&
         title.textContent === 'Session ended' &&
         s &&
-        !s.classList.contains('hidden') &&
-        /session ended/i.test(s.textContent)
+        s.classList.contains('hidden')
       );
     },
     { timeout: 5000 }
@@ -84,7 +83,7 @@ const CHROME =
 
   const statusText = await page.evaluate(() => {
     const s = document.getElementById('status');
-    return s ? s.textContent : '';
+    return s && !s.classList.contains('hidden') ? s.textContent : '';
   });
 
   await browser.close();

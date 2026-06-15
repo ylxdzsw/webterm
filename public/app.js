@@ -121,14 +121,12 @@ function setStatus(text, kind) {
   }
   if (!text) {
     if (sessionEnded) return;
-    els.status.classList.remove('above-overlay');
     els.status.classList.add('hidden');
     return;
   }
   els.status.textContent = text;
   els.status.className = 'status ' + (kind || '');
   els.status.classList.remove('hidden');
-  if (sessionEnded) els.status.classList.add('above-overlay');
 }
 
 let overlayKind = null; // null | 'session-ended' | ...
@@ -170,6 +168,7 @@ function hideOverlay() {
 function dismissSessionEndedOverlay() {
   if (overlayKind !== 'session-ended') return;
   hideOverlay();
+  setStatus('session ended — reload for a new shell', 'err');
 }
 
 function setDocTitle(title) {
@@ -272,7 +271,11 @@ function showAuthError() {
 // The program exited: the server process is gone. Reloading the page spawns a
 // fresh shell (under socket activation) or reconnects once the unit is back.
 function showReload(code) {
-  setStatus('session ended — reload for a new shell', 'err');
+  if (statusHideTimer) {
+    clearTimeout(statusHideTimer);
+    statusHideTimer = null;
+  }
+  els.status.classList.add('hidden');
   showOverlay(
     'Session ended',
     'The program exited (code ' +
