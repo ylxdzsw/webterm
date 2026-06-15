@@ -52,6 +52,10 @@ body {
   color: var(--accent);
 }
 
+.status.above-overlay {
+  z-index: 40;
+}
+
 .hidden {
   display: none !important;
 }
@@ -68,6 +72,7 @@ body {
 }
 
 .card {
+  position: relative;
   max-width: 560px;
   width: calc(100% - 40px);
   background: #11161f;
@@ -80,6 +85,7 @@ body {
 .card h2 {
   margin: 0 0 10px;
   font-size: 18px;
+  padding-right: 24px;
 }
 
 .card p {
@@ -127,4 +133,25 @@ button.secondary,
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+button.overlay-dismiss {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.32);
+  font-size: 20px;
+  line-height: 1;
+  font-weight: 400;
+  border-radius: 6px;
+}
+
+button.overlay-dismiss:hover {
+  color: rgba(255, 255, 255, 0.62);
+  background: rgba(255, 255, 255, 0.06);
 }

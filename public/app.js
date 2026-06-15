@@ -44,6 +44,7 @@ const els = {
   overlayTitle: document.getElementById('overlay-title'),
   overlayBody: document.getElementById('overlay-body'),
   overlayActions: document.getElementById('overlay-actions'),
+  overlayDismiss: document.getElementById('overlay-dismiss'),
 };
 
 // ---------------------------------------------------------------- token
@@ -111,16 +112,29 @@ term.attachCustomKeyEventHandler((ev) => {
 });
 
 // ---------------------------------------------------------------- status / overlay
+let statusHideTimer = null;
+
 function setStatus(text, kind) {
+  if (statusHideTimer) {
+    clearTimeout(statusHideTimer);
+    statusHideTimer = null;
+  }
   if (!text) {
+    if (sessionEnded) return;
+    els.status.classList.remove('above-overlay');
     els.status.classList.add('hidden');
     return;
   }
   els.status.textContent = text;
   els.status.className = 'status ' + (kind || '');
+  els.status.classList.remove('hidden');
+  if (sessionEnded) els.status.classList.add('above-overlay');
 }
 
-function showOverlay(title, bodyHtml, actions) {
+let overlayKind = null; // null | 'session-ended' | ...
+
+function showOverlay(title, bodyHtml, actions, kind) {
+  overlayKind = kind || null;
   els.overlayTitle.textContent = title;
   els.overlayBody.innerHTML = bodyHtml;
   els.overlayActions.innerHTML = '';
@@ -140,10 +154,22 @@ function showOverlay(title, bodyHtml, actions) {
     node.textContent = a.label;
     els.overlayActions.appendChild(node);
   }
+  if (overlayKind === 'session-ended') {
+    els.overlayDismiss.classList.remove('hidden');
+  } else {
+    els.overlayDismiss.classList.add('hidden');
+  }
   els.overlay.classList.remove('hidden');
 }
 function hideOverlay() {
   els.overlay.classList.add('hidden');
+  els.overlayDismiss.classList.add('hidden');
+  overlayKind = null;
+}
+
+function dismissSessionEndedOverlay() {
+  if (overlayKind !== 'session-ended') return;
+  hideOverlay();
 }
 
 function setDocTitle(title) {
@@ -155,6 +181,7 @@ let abort = null; // AbortController for the active stream
 let connected = false; // stream is open and reading
 let connecting = false; // a connect() attempt is in flight (guards against overlap)
 let manualStop = false; // suppress auto-reconnect (nag / exit)
+let sessionEnded = false; // PTY exited; terminal is read-only until reload
 let reconnectDelay = 1000;
 let reconnectTimer = null;
 
@@ -245,16 +272,19 @@ function showAuthError() {
 // The program exited: the server process is gone. Reloading the page spawns a
 // fresh shell (under socket activation) or reconnects once the unit is back.
 function showReload(code) {
-  setStatus('session ended', 'err');
+  setStatus('session ended — reload for a new shell', 'err');
   showOverlay(
     'Session ended',
-    'The program exited (code ' + code + '). Reload to start a fresh shell.',
+    'The program exited (code ' +
+      code +
+      '). Reload to start a fresh shell. You can dismiss this to scroll and copy the output.',
     [
       {
         label: 'Reload',
         onClick: () => location.reload(),
       },
-    ]
+    ],
+    'session-ended'
   );
 }
 
@@ -321,7 +351,10 @@ async function connect() {
   connecting = false;
   reconnectDelay = 1000;
   setStatus('connected', 'ok');
-  setTimeout(() => setStatus(''), 1200);
+  statusHideTimer = setTimeout(() => {
+    statusHideTimer = null;
+    setStatus('');
+  }, 1200);
   sendResize(true);
 
   try {
@@ -387,6 +420,9 @@ function handleFrame(line) {
       connected = false;
       connecting = false;
       manualStop = true;
+      sessionEnded = true;
+      term.options.disableStdin = true;
+      term.options.cursorBlink = false;
       clearReconnect();
       if (abort) abort.abort();
       showReload(msg.code);
@@ -602,6 +638,20 @@ async function safeText(resp) {
     return '';
   }
 }
+
+// ---------------------------------------------------------------- session-ended dismiss
+els.overlayDismiss.addEventListener('click', dismissSessionEndedOverlay);
+
+els.overlay.addEventListener('click', (ev) => {
+  if (ev.target === els.overlay) dismissSessionEndedOverlay();
+});
+
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && overlayKind === 'session-ended') {
+    ev.preventDefault();
+    dismissSessionEndedOverlay();
+  }
+});
 
 // ---------------------------------------------------------------- go
 getToken();

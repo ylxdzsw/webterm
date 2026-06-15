@@ -50,8 +50,9 @@ The server owns exactly one PTY. When the program in it exits, the server calls
   a loop.
 
 Browser disconnects do **not** end the session — only the program exiting does.
-When it exits the attached page shows a **Reload** button; reloading hits the
-socket again and (under socket activation) gets a fresh shell.
+When it exits the attached page shows a **Reload** button and a dismiss control;
+close the dialog to scroll and copy cached output, then reload when you want a
+fresh shell (under socket activation the next request starts a new process).
 
 ### Transport (WebSocket-free)
 
