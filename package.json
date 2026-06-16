@@ -8,6 +8,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node src/server.js",
+    "test:unit": "node scripts/unit.js",
     "test:smoke": "node scripts/browser-smoke.js",
     "test:nag": "node scripts/browser-nag.js",
     "test:nag-redirect": "node scripts/browser-nag-redirect.js",

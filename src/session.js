@@ -124,6 +124,41 @@ class Session {
     }
   }
 
+  // Attach a disposable browser stream view. Live output is buffered until the
+  // caller sends the initial hello/snapshot frames, so reconnects cannot miss
+  // bytes while xterm's parser catches up.
+  attachSubscriber(sub, onReady) {
+    const attached = {
+      buffering: true,
+      buffer: [],
+      send(line) {
+        if (this.buffering) {
+          this.buffer.push(line);
+        } else {
+          sub.send(line);
+        }
+      },
+      end() {
+        sub.end();
+      },
+      release() {
+        this.buffering = false;
+        for (const line of this.buffer) sub.send(line);
+        this.buffer = [];
+      },
+    };
+
+    this.subscribers.add(attached);
+    this.headless.write('', () => {
+      if (!this.subscribers.has(attached)) return;
+      onReady({
+        snapshot: this.snapshot(),
+        release: () => attached.release(),
+      });
+    });
+    return attached;
+  }
+
   // String of escape sequences that recreates the current screen.
   snapshot() {
     try {
@@ -196,10 +231,10 @@ function clamp(n, lo, hi) {
 // Always run the account's login shell from passwd, not the parent process's
 // inherited SHELL environment variable. If it is unset or unusable, fail
 // clearly instead of guessing.
-function resolveShell() {
+function resolveShell(deps = { fs, os }) {
   let info;
   try {
-    info = os.userInfo();
+    info = deps.os.userInfo();
   } catch (e) {
     const detail = e && e.message ? `: ${e.message}` : '';
     throw new Error(`Failed to resolve login shell from passwd${detail}`);
@@ -211,7 +246,7 @@ function resolveShell() {
   }
 
   try {
-    fs.accessSync(file, fs.constants.X_OK);
+    deps.fs.accessSync(file, deps.fs.constants.X_OK);
   } catch (e) {
     const detail = e && e.message ? `: ${e.message}` : '';
     throw new Error(`Login shell ${JSON.stringify(file)} is not executable${detail}`);
@@ -221,4 +256,4 @@ function resolveShell() {
   return { file, args, command: [file, ...args].join(' ') };
 }
 
-module.exports = { Session };
+module.exports = { Session, resolveShell };

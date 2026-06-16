@@ -5,10 +5,23 @@ const crypto = require('crypto');
 const express = require('express');
 const { Session } = require('./session');
 const { frame, MAGIC_PREFIX } = require('./protocol');
+const { createStreamSubscriber, parseBufferLimit } = require('./stream-subscriber');
 
 const HOST = process.env.WEBTERM_HOST || '127.0.0.1';
 const PORT = parseInt(process.env.WEBTERM_PORT || '8080', 10);
 const KEEPALIVE_MS = parseInt(process.env.WEBTERM_KEEPALIVE_MS || '15000', 10);
+const SUBSCRIBER_BUFFER_BYTES = parseBufferLimit(process.env.WEBTERM_SUBSCRIBER_BUFFER_BYTES);
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "base-uri 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'none'",
+].join('; ');
 
 // systemd socket-activation hand-off. When the unit is started by an incoming
 // connection, systemd passes the already-listening socket(s) as fds starting
@@ -87,6 +100,11 @@ const app = express();
 app.disable('x-powered-by');
 app.disable('etag');
 
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy', CSP);
+  next();
+});
+
 function checkToken(provided) {
   if (typeof provided !== 'string' || provided.length === 0) return false;
   const a = Buffer.from(provided);
@@ -147,60 +165,60 @@ app.get('/api/stream', auth, (req, res) => {
   });
   res.flushHeaders();
 
-  const sub = {
-    send(line) {
-      try {
-        res.write(line);
-      } catch (e) {
-        /* peer gone */
-      }
-    },
-    end() {
-      try {
-        res.end();
-      } catch (e) {
-        /* ignore */
-      }
-    },
-  };
+  let attached = null;
+  let ka = null;
+  let closed = false;
 
-  // Atomic snapshot + subscribe: both run synchronously in this tick, so no PTY
-  // output can slip in between (no gap, no duplication).
-  const snap = session.snapshot();
-  session.addSubscriber(sub);
+  function cleanup() {
+    if (closed) return;
+    closed = true;
+    if (ka) clearInterval(ka);
+    if (attached) session.removeSubscriber(attached);
+  }
 
-  res.write(
-    frame({
-      t: 'hello',
-      seq: session.bytes,
-      cols: session.cols,
-      rows: session.rows,
-      command: session.command,
-      title: session.title,
-      ended: session.ended,
-    })
-  );
-  if (snap && snap.length) {
-    res.write(
+  const sub = createStreamSubscriber(res, {
+    maxBufferBytes: SUBSCRIBER_BUFFER_BYTES,
+    onClose: cleanup,
+  });
+
+  attached = session.attachSubscriber(sub, ({ snapshot, release }) => {
+    if (closed) return;
+
+    sub.send(
       frame({
-        t: 'o',
+        t: 'hello',
         seq: session.bytes,
-        snapshot: true,
-        d: Buffer.from(snap, 'utf8').toString('base64'),
+        cols: session.cols,
+        rows: session.rows,
+        command: session.command,
+        title: session.title,
+        ended: session.ended,
       })
     );
-  }
-  if (session.ended) {
-    res.write(frame({ t: 'exit', code: session.exitCode }));
-    session.removeSubscriber(sub);
-    return res.end();
-  }
+    if (snapshot && snapshot.length) {
+      sub.send(
+        frame({
+          t: 'o',
+          seq: session.bytes,
+          snapshot: true,
+          d: Buffer.from(snapshot, 'utf8').toString('base64'),
+        })
+      );
+    }
+    if (session.ended) {
+      sub.send(frame({ t: 'exit', code: session.exitCode }));
+      release();
+      sub.end();
+      return;
+    }
 
-  const ka = setInterval(() => sub.send(frame({ t: 'k', seq: session.bytes })), KEEPALIVE_MS);
+    release();
+    ka = setInterval(() => sub.send(frame({ t: 'k', seq: session.bytes })), KEEPALIVE_MS);
+  });
+  if (closed) session.removeSubscriber(attached);
 
   req.on('close', () => {
-    clearInterval(ka);
-    session.removeSubscriber(sub);
+    sub.close();
   });
 });
 

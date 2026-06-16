@@ -84,11 +84,24 @@ body {
   padding-right: 24px;
 }
 
-.card p {
+.card p,
+.overlay-body {
   margin: 0 0 16px;
   line-height: 1.5;
   font-size: 14px;
   color: #aab2bd;
+}
+
+.overlay-body p {
+  margin: 0 0 10px;
+}
+
+.overlay-body p:last-child {
+  margin-bottom: 0;
+}
+
+.overlay-body a {
+  color: var(--accent);
 }
 
 .card ol {

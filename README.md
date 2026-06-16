@@ -119,7 +119,8 @@ use and gone when its shell exits. To change the number of slots, edit the
 
 See `.env.example`. Common knobs: `WEBTERM_TOKEN`, `WEBTERM_HOST` /
 `WEBTERM_PORT` (only used without socket activation), `WEBTERM_CWD`,
-`WEBTERM_SCROLLBACK`, `WEBTERM_KEEPALIVE_MS`.
+`WEBTERM_SCROLLBACK`, `WEBTERM_KEEPALIVE_MS`,
+`WEBTERM_SUBSCRIBER_BUFFER_BYTES`.
 
 WebTerm always runs the effective user's login shell from passwd as a login
 shell. If the passwd entry has no shell or points to something unusable, the

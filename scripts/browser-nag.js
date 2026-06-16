@@ -7,6 +7,10 @@
 const puppeteer = require('puppeteer-core');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
+const TEST_URL =
+  URL.replace(/\/$/, '/') +
+  '?x=' +
+  encodeURIComponent('<img src=x onerror="window.__webtermXss=1">');
 const TOKEN = process.env.SMOKE_TOKEN || 'testtoken';
 const CHROME = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
 
@@ -44,17 +48,20 @@ const NAG_HTML =
     }
   });
 
-  await page.goto(URL, { waitUntil: 'domcontentloaded' });
+  await page.goto(TEST_URL, { waitUntil: 'domcontentloaded' });
   await new Promise((r) => setTimeout(r, 1500));
 
   const result = await page.evaluate(() => {
     const o = document.getElementById('overlay');
+    const body = document.getElementById('overlay-body');
     return {
       overlayVisible: o && !o.classList.contains('hidden'),
       title: document.getElementById('overlay-title').textContent,
       hasRefresh: Array.from(document.querySelectorAll('#overlay-actions *')).some(
         (n) => /refresh/i.test(n.textContent)
       ),
+      hasInjectedNode: !!(body && body.querySelector('img,script,svg')),
+      xssFired: window.__webtermXss === 1,
     };
   });
 
@@ -63,9 +70,15 @@ const NAG_HTML =
   console.log('overlayVisible:', result.overlayVisible);
   console.log('title         :', JSON.stringify(result.title));
   console.log('hasRefresh    :', result.hasRefresh);
+  console.log('hasInjectedNode:', result.hasInjectedNode);
+  console.log('xssFired      :', result.xssFired);
 
   const ok =
-    result.overlayVisible && /refresh required/i.test(result.title) && result.hasRefresh;
+    result.overlayVisible &&
+    /refresh required/i.test(result.title) &&
+    result.hasRefresh &&
+    !result.hasInjectedNode &&
+    !result.xssFired;
   console.log(ok ? '\nNAG-DETECT: PASS' : '\nNAG-DETECT: FAIL');
   process.exit(ok ? 0 : 1);
 })().catch((e) => {

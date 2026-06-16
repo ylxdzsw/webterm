@@ -133,11 +133,25 @@ function setStatus(text, kind) {
 
 let overlayKind = null; // null | 'session-ended' | ...
 
-function showOverlay(title, bodyHtml, actions, kind) {
+function textParagraph(text) {
+  const p = document.createElement('p');
+  p.textContent = text;
+  return p;
+}
+
+function normalizeBodyNodes(body) {
+  const parts = Array.isArray(body) ? body : [body];
+  return parts.map((part) => {
+    if (part instanceof Node) return part;
+    return textParagraph(String(part || ''));
+  });
+}
+
+function showOverlay(title, body, actions, kind) {
   overlayKind = kind || null;
   els.overlayTitle.textContent = title;
-  els.overlayBody.innerHTML = bodyHtml;
-  els.overlayActions.innerHTML = '';
+  els.overlayBody.replaceChildren(...normalizeBodyNodes(body));
+  els.overlayActions.replaceChildren();
   for (const a of actions) {
     let node;
     if (a.href) {
@@ -207,14 +221,14 @@ function hasStreamContentType(resp) {
   return ct.includes('application/x-ndjson');
 }
 
-function stopAndShowRefresh(title, bodyHtml, statusText) {
+function stopAndShowRefresh(title, bodyContent, statusText) {
   manualStop = true;
   connected = false;
   connecting = false;
   clearReconnect();
   if (abort) abort.abort();
   setStatus(statusText || 'refresh required', 'warn');
-  showOverlay(title, bodyHtml, [
+  showOverlay(title, bodyContent, [
     {
       label: 'Refresh',
       onClick: () => location.reload(),
@@ -261,8 +275,10 @@ async function checkClientResponse(resp, opts) {
 function unexpectedResponseDetected() {
   stopAndShowRefresh(
     'Refresh required',
-    'The network returned an unexpected response for this terminal. Refresh this page. ' +
+    [
+      'The network returned an unexpected response for this terminal. Refresh this page.',
       'If your network shows an acknowledgement page, complete it and then return here.',
+    ],
     'refresh required'
   );
 }
