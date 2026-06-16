@@ -13,6 +13,19 @@ const TOKEN = process.env.SMOKE_TOKEN || 'testtoken';
 const CHROME =
   process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitFor(fn, timeoutMs = 3000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (fn()) return true;
+    await sleep(25);
+  }
+  return false;
+}
+
 (async () => {
   const errors = [];
   const browser = await puppeteer.launch({
@@ -27,7 +40,17 @@ const CHROME =
   });
 
   const inputReqs = [];
+  const inputPayloads = [];
   let streamStatus = null;
+  page.on('request', (r) => {
+    if (!r.url().includes('/api/input')) return;
+    if (typeof r.postDataBuffer === 'function') {
+      const body = r.postDataBuffer();
+      inputPayloads.push(body ? Buffer.from(body).toString('utf8') : '');
+    } else {
+      inputPayloads.push(r.postData() || '');
+    }
+  });
   page.on('response', (r) => {
     const u = r.url();
     if (u.includes('/api/input')) inputReqs.push(r.status());
@@ -45,12 +68,80 @@ const CHROME =
     () => document.querySelector('.xterm-rows') != null,
     { timeout: 5000 }
   );
-  await new Promise((r) => setTimeout(r, 1500));
+  await sleep(1500);
+
+  const inputStart = inputPayloads.length;
+  await page.evaluate(() => {
+    window.queueNormalInput('abc');
+  });
+  await page.keyboard.press('Enter');
+  const gotEnterBoundary = await waitFor(() => {
+    const seen = inputPayloads.slice(inputStart);
+    const i = seen.indexOf('abc');
+    return i >= 0 && seen[i + 1] === '\r';
+  });
+  if (!gotEnterBoundary) {
+    errors.push(
+      'typing abc then Enter did not produce separate ordered payloads: ' +
+        JSON.stringify(inputPayloads.slice(inputStart))
+    );
+  }
+  await page.keyboard.down('Control');
+  await page.keyboard.press('KeyC');
+  await page.keyboard.up('Control');
+  await sleep(200);
+
+  const shiftEnterStart = inputPayloads.length;
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('Enter');
+  await page.keyboard.up('Shift');
+  const gotShiftEnter = await waitFor(() =>
+    inputPayloads.slice(shiftEnterStart).includes('\x1b[13;2u')
+  );
+  if (!gotShiftEnter) {
+    errors.push(
+      'Shift+Enter did not produce CSI-u payload: ' +
+        JSON.stringify(inputPayloads.slice(shiftEnterStart))
+    );
+  }
+  await page.keyboard.down('Control');
+  await page.keyboard.press('KeyC');
+  await page.keyboard.up('Control');
+  await sleep(200);
+
+  const pasteText = 'PASTE_A_' + Date.now() + '\nPASTE_B_' + Date.now();
+  const pasteStart = inputPayloads.length;
+  await page.evaluate((text) => {
+    const textarea = document.querySelector('.xterm-helper-textarea');
+    if (!textarea) throw new Error('missing xterm helper textarea');
+    textarea.focus();
+    const data = new DataTransfer();
+    data.setData('text/plain', text);
+    const ev = new ClipboardEvent('paste', {
+      clipboardData: data,
+      bubbles: true,
+      cancelable: true,
+    });
+    textarea.dispatchEvent(ev);
+  }, pasteText);
+  const gotPaste = await waitFor(() =>
+    inputPayloads.slice(pasteStart).join('').replace(/\r/g, '\n').includes(pasteText)
+  );
+  const pastePayloads = inputPayloads.slice(pasteStart);
+  if (!gotPaste || pastePayloads.includes('\r')) {
+    errors.push(
+      'multiline paste was not preserved as paste data: ' + JSON.stringify(pastePayloads)
+    );
+  }
+  await page.keyboard.down('Control');
+  await page.keyboard.press('KeyC');
+  await page.keyboard.up('Control');
+  await sleep(300);
 
   // Title fallback: clearing the PTY title via OSC 0 should make the tab
   // show the default "Webterm" title.
   await page.keyboard.type("printf '\\033]0;\\007'; sleep 1.5\n");
-  await new Promise((r) => setTimeout(r, 800));
+  await sleep(800);
   const clearedTitle = await page.evaluate(() => document.title);
   if (clearedTitle !== 'Webterm') {
     errors.push('cleared title is ' + JSON.stringify(clearedTitle) + ', expected "Webterm"');
@@ -60,7 +151,7 @@ const CHROME =
   // "Webterm — " prefix.
   const ptyTitle = 'WEBTERM_PTY_TITLE_' + Date.now();
   await page.keyboard.type("printf '\\033]0;" + ptyTitle + "\\007'; sleep 1.5\n");
-  await new Promise((r) => setTimeout(r, 800));
+  await sleep(800);
   const observedTitle = await page.evaluate(() => document.title);
   if (observedTitle !== ptyTitle) {
     errors.push('pty title is ' + JSON.stringify(observedTitle) + ', expected ' + JSON.stringify(ptyTitle));
@@ -69,7 +160,7 @@ const CHROME =
   // Type a command that produces a unique marker.
   const marker = 'PUPPETEER_OK_' + Date.now();
   await page.keyboard.type('echo ' + marker + '\n');
-  await new Promise((r) => setTimeout(r, 1200));
+  await sleep(1200);
 
   const screenHasMarker = await page.evaluate((mk) => {
     const text = document.querySelector('.xterm-rows')
@@ -118,6 +209,7 @@ const CHROME =
 
   console.log('streamStatus       :', streamStatus);
   console.log('inputReqs (statuses):', JSON.stringify(inputReqs));
+  console.log('inputPayloads      :', JSON.stringify(inputPayloads));
   console.log('overlayVisible     :', overlayVisible);
   console.log('screenHasMarker    :', screenHasMarker);
   console.log('snapshotHasMarker  :', snapshotHasMarker);

@@ -100,6 +100,7 @@ term.attachCustomKeyEventHandler((ev) => {
   if (ev.type !== 'keydown') return true;
 
   const ctrlOnly = ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey;
+  const enterOnly = ev.key === 'Enter' && !ev.ctrlKey && !ev.metaKey && !ev.altKey;
 
   if (ctrlOnly && ev.code === 'KeyC' && copyTerminalSelection()) {
     ev.preventDefault();
@@ -107,6 +108,18 @@ term.attachCustomKeyEventHandler((ev) => {
   }
 
   if (ctrlOnly && ev.code === 'KeyV') {
+    return false;
+  }
+
+  if (enterOnly && !ev.shiftKey) {
+    ev.preventDefault();
+    queueImmediateInput('\r');
+    return false;
+  }
+
+  if (enterOnly && ev.shiftKey) {
+    ev.preventDefault();
+    queueImmediateInput('\x1b[13;2u');
     return false;
   }
 
@@ -510,16 +523,15 @@ function clearReconnect() {
 
 // ---------------------------------------------------------------- input
 //
-// Input is sent as short POSTs, but coalesced *self-clocked* to the network:
-// we keep at most one request in flight, and everything typed while it is in
-// flight accumulates into a single buffer that is sent as one POST the moment
-// the previous one returns. So a burst typed during one proxy round-trip
-// collapses to ~one request per round-trip (fast link -> small frequent
-// batches; slow link -> fewer, larger batches), instead of one request per
-// 8ms window queued behind each other. Keeping exactly one request in flight
-// also preserves keystroke ordering without input sequence numbers, even if
-// the proxy/connection pool would otherwise reorder concurrent requests.
-let inputBuf = '';
+// Input is sent as short POSTs, but coalesced *self-clocked* to the network.
+// We keep at most one request in flight, and normal terminal data typed while
+// it is in flight accumulates into ordered queue segments. Boundary inputs
+// such as physical Enter are their own segment, which prevents text+Enter from
+// looking like one paste-like burst to programs running in the PTY. Keeping
+// exactly one request in flight also preserves keystroke ordering without input
+// sequence numbers, even if the proxy/connection pool would otherwise reorder
+// concurrent requests.
+let inputSegments = [];
 let inputMotionTimer = null;
 let inputIdleTimer = null;
 let inputBurstTimer = null;
@@ -541,10 +553,25 @@ function clearInputTimers() {
 }
 
 term.onData((data) => {
-  inputBuf += data;
-  inputBuf = compactMouseMotion(inputBuf);
-  scheduleFlush();
+  queueNormalInput(data);
 });
+
+function queueNormalInput(data) {
+  if (!data) return;
+  const last = inputSegments[inputSegments.length - 1];
+  if (last && !last.immediate) {
+    last.data = compactMouseMotion(last.data + data);
+  } else {
+    inputSegments.push({ data: compactMouseMotion(data), immediate: false });
+  }
+  scheduleFlush();
+}
+
+function queueImmediateInput(data) {
+  if (!data) return;
+  inputSegments.push({ data, immediate: true });
+  flushInput();
+}
 
 function isSgrMotion(seq) {
   const m = SGR_MOUSE_RE.exec(seq);
@@ -553,7 +580,20 @@ function isSgrMotion(seq) {
 }
 
 function isMotionOnlyPending() {
-  return inputBuf.length > 0 && isSgrMotion(inputBuf);
+  return (
+    inputSegments.length === 1 &&
+    !inputSegments[0].immediate &&
+    inputSegments[0].data.length > 0 &&
+    isSgrMotion(inputSegments[0].data)
+  );
+}
+
+function hasPendingInput() {
+  return inputSegments.some((segment) => segment.data.length > 0);
+}
+
+function isImmediatePending() {
+  return inputSegments.length > 0 && inputSegments[0].immediate;
 }
 
 // Drop redundant intermediate positions from a run of SGR motion reports.
@@ -599,8 +639,15 @@ function compactMouseMotion(buf) {
 
 function scheduleFlush() {
   // While a POST is in flight, just accumulate; the in-flight request's
-  // completion handler will drain whatever piled up in one follow-up POST.
+  // completion handler will drain whatever piled up in ordered follow-up
+  // segments.
   if (inputInFlight) return;
+  if (!hasPendingInput()) return;
+  if (isImmediatePending()) {
+    clearInputTimers();
+    flushInput();
+    return;
+  }
   if (isMotionOnlyPending()) {
     if (inputIdleTimer != null || inputBurstTimer != null) {
       if (inputIdleTimer != null) {
@@ -630,15 +677,22 @@ function scheduleFlush() {
 
 function flushInput() {
   clearInputTimers();
-  if (inputInFlight || !inputBuf) return;
-  inputBuf = compactMouseMotion(inputBuf);
-  const payload = inputBuf;
-  inputBuf = '';
+  if (inputInFlight || !hasPendingInput()) return;
+  const segment = inputSegments.shift();
+  const payload = segment.immediate ? segment.data : compactMouseMotion(segment.data);
+  if (!payload) {
+    if (hasPendingInput()) scheduleFlush();
+    return;
+  }
   inputInFlight = true;
   sendInput(payload).finally(() => {
     inputInFlight = false;
-    // Anything typed during the round-trip is now coalesced into one POST.
-    if (inputBuf) scheduleFlush();
+    // Anything typed during the round-trip is now coalesced into ordered
+    // follow-up segments.
+    if (hasPendingInput()) {
+      if (isImmediatePending()) flushInput();
+      else scheduleFlush();
+    }
   });
 }
 
