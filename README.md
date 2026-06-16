@@ -10,9 +10,9 @@ front of it, and open it in regular Chrome on a locked-down work PC. You get a
 full interactive terminal — including TUI apps like `opencode`, `claude code`,
 `vim`, `htop` — that keeps running when the browser disconnects.
 
-**One server process = one shell.** The server launches a single program (your
-shell by default) on startup; the page is a disposable view of it. When that
-program exits, the server process exits too. Multiple independent terminals are
+**One server process = one shell.** The server launches the account's login
+shell from passwd on startup; the page is a disposable view of it. When that
+shell exits, the server process exits too. Multiple independent terminals are
 provided by running **several instances behind nginx + systemd socket
 activation** (see *Deploy*), not by an in-process session registry.
 
@@ -118,9 +118,13 @@ use and gone when its shell exits. To change the number of slots, edit the
 ## Configuration
 
 See `.env.example`. Common knobs: `WEBTERM_TOKEN`, `WEBTERM_HOST` /
-`WEBTERM_PORT` (only used without socket activation), `WEBTERM_CMD` /
-`WEBTERM_ARGS` (the single program the server runs), `WEBTERM_CWD`,
+`WEBTERM_PORT` (only used without socket activation), `WEBTERM_CWD`,
 `WEBTERM_SCROLLBACK`, `WEBTERM_KEEPALIVE_MS`.
+
+WebTerm always runs the effective user's login shell from passwd as a login
+shell. If the passwd entry has no shell or points to something unusable, the
+server fails to start with an explicit error instead of falling back to another
+shell.
 
 ## TUI notes
 

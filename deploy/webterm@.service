@@ -38,7 +38,6 @@ KillMode=control-group
 #   openssl rand -base64 32
 # Prefer keeping the secret out of the unit file via EnvironmentFile.
 Environment=WEBTERM_TOKEN=
-# Default program every slot runs (no per-session command anymore):
-# Environment=WEBTERM_CMD=/bin/bash
-# Environment=WEBTERM_ARGS=-l
+# Every slot runs the service user's login shell from passwd as a login shell.
+# If that passwd shell is missing or unusable, startup fails explicitly.
 # EnvironmentFile=/opt/webterm/.env

@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const os = require('os');
 const pty = require('node-pty');
 const { Terminal } = require('@xterm/headless');
@@ -56,7 +57,7 @@ class Session {
       for (const sub of this.subscribers) sub.send(line);
     });
 
-    const resolved = resolveCommand();
+    const resolved = resolveShell();
     this.command = resolved.command;
 
     const env = Object.assign({}, process.env, {
@@ -64,17 +65,23 @@ class Session {
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       LANG: process.env.WEBTERM_LANG || process.env.LANG || 'C.UTF-8',
+      SHELL: resolved.file,
     });
     // Don't leak our own config knobs into the child shell.
     delete env.WEBTERM_TOKEN;
 
-    this.pty = pty.spawn(resolved.file, resolved.args, {
-      name: 'xterm-256color',
-      cols: this.cols,
-      rows: this.rows,
-      cwd: process.env.WEBTERM_CWD || os.homedir(),
-      env,
-    });
+    try {
+      this.pty = pty.spawn(resolved.file, resolved.args, {
+        name: 'xterm-256color',
+        cols: this.cols,
+        rows: this.rows,
+        cwd: process.env.WEBTERM_CWD || os.homedir(),
+        env,
+      });
+    } catch (e) {
+      const detail = e && e.message ? `: ${e.message}` : '';
+      throw new Error(`Failed to start login shell ${JSON.stringify(resolved.file)}${detail}`);
+    }
 
     this.pty.onData((data) => this._onData(data));
     this.pty.onExit((e) => this._onExit(e && e.exitCode != null ? e.exitCode : 0));
@@ -186,23 +193,32 @@ function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
 }
 
-// The server-configured program. With no overrides this is "$SHELL -l". There
-// is no per-session command anymore: every server runs one shell.
-function defaultCommand() {
-  const file = process.env.WEBTERM_CMD || process.env.SHELL || 'bash';
-  return [file, ...defaultArgs()].join(' ');
-}
+// Always run the account's login shell from passwd, not the parent process's
+// inherited SHELL environment variable. If it is unset or unusable, fail
+// clearly instead of guessing.
+function resolveShell() {
+  let info;
+  try {
+    info = os.userInfo();
+  } catch (e) {
+    const detail = e && e.message ? `: ${e.message}` : '';
+    throw new Error(`Failed to resolve login shell from passwd${detail}`);
+  }
 
-function defaultArgs() {
-  // An explicitly-set WEBTERM_ARGS (even empty) wins over the "-l" default, so
-  // `WEBTERM_CMD=opencode` + `WEBTERM_ARGS=` launches bare `opencode`.
-  if (process.env.WEBTERM_ARGS === undefined) return ['-l'];
-  return process.env.WEBTERM_ARGS.split(' ').filter(Boolean);
-}
+  const file = typeof info.shell === 'string' ? info.shell.trim() : '';
+  if (!file) {
+    throw new Error(`Login shell is missing in passwd for user ${JSON.stringify(info.username || String(info.uid))}`);
+  }
 
-function resolveCommand() {
-  const file = process.env.WEBTERM_CMD || process.env.SHELL || 'bash';
-  return { file, args: defaultArgs(), command: defaultCommand() };
+  try {
+    fs.accessSync(file, fs.constants.X_OK);
+  } catch (e) {
+    const detail = e && e.message ? `: ${e.message}` : '';
+    throw new Error(`Login shell ${JSON.stringify(file)} is not executable${detail}`);
+  }
+
+  const args = ['-l'];
+  return { file, args, command: [file, ...args].join(' ') };
 }
 
 module.exports = { Session };
