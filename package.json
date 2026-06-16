@@ -10,6 +10,8 @@
     "dev": "node src/server.js",
     "test:smoke": "node scripts/browser-smoke.js",
     "test:nag": "node scripts/browser-nag.js",
+    "test:nag-redirect": "node scripts/browser-nag-redirect.js",
+    "test:reconnect-fail": "node scripts/browser-reconnect-fail.js",
     "test:exit": "node scripts/browser-exit.js"
   },
   "engines": {

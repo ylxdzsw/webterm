@@ -67,11 +67,13 @@ Two half-duplex HTTP/1.1 channels per page:
 URLs are **relative** to the page, so the same client works whether it is served
 at `/` (local) or under a `/<slot>/` prefix (behind nginx).
 
-Every legitimate message is one line of JSON beginning with `{"m":"WT1"`. The
-proxy's reminder page is HTML, so the client detects a hijack by checking that
-prefix. When detected, it **stops and shows instructions + a Reconnect button**:
-acknowledge the page in another tab, then click Reconnect — no page reload
-needed (the app stays in memory), and your session is intact.
+Every legitimate message is one line of JSON beginning with `{"m":"WT1"`. If
+the network returns anything else — HTML, a redirect, the wrong MIME type, or
+other non-protocol bytes — the client stops and asks you to **Refresh**. That
+lets the browser land on any acknowledgement page the network requires before
+you return to the terminal. Plain transport failures are retried automatically
+for a while; after several failed reconnect attempts the client also falls back
+to a refresh prompt.
 
 ## Quick start (local, no systemd/nginx)
 

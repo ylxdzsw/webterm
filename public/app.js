@@ -20,10 +20,11 @@
 // spawns a fresh shell. Browser disconnects do not end the session: while the
 // program runs the server keeps it alive and reconnects replay a snapshot.
 //
-// The corporate proxy intercepts outbound API calls and *replaces the response*
-// with an HTML "acknowledge" page until the user clicks through. Detection is
-// entirely on the client: every legitimate reply begins with MAGIC_PREFIX; if
-// the bytes we receive are HTML (or anything else), we stop and show Reconnect.
+// The corporate proxy intercepts outbound API calls and may replace the
+// response with an HTML "acknowledge" page or redirect to another origin until
+// the user clicks through. Detection is entirely on the client: every
+// legitimate reply begins with MAGIC_PREFIX; if the response is anything else,
+// we stop and ask the user to refresh.
 
 const MAGIC_PREFIX = '{"m":"WT1"';
 const INPUT_FLUSH_MS = 8;
@@ -33,6 +34,7 @@ const INPUT_BURST_MAX_MS = 33;
 // Motion-only SGR reports: leading-edge flush at this interval during drag/hover.
 const MOUSE_MOTION_FLUSH_MS = 33;
 const RESIZE_DEBOUNCE_MS = 150;
+const MAX_RECONNECT_ATTEMPTS = 4;
 
 // SGR mouse: ESC [ < Pb ; Px ; Py M|m  (1006/1016). Pb has bit 5 set on MOVE.
 const SGR_MOUSE_RE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])/;
@@ -179,33 +181,74 @@ function setDocTitle(title) {
 let abort = null; // AbortController for the active stream
 let connected = false; // stream is open and reading
 let connecting = false; // a connect() attempt is in flight (guards against overlap)
-let manualStop = false; // suppress auto-reconnect (nag / exit)
+let manualStop = false; // suppress auto-reconnect (refresh prompt / exit)
 let sessionEnded = false; // PTY exited; terminal is read-only until reload
 let reconnectDelay = 1000;
 let reconnectTimer = null;
+let reconnectAttempts = 0;
 
 function isOurs(text) {
   return typeof text === 'string' && text.startsWith(MAGIC_PREFIX);
 }
 
-// The proxy replaces API *responses* with HTML. Legitimate replies are JSON
-// lines that begin with MAGIC_PREFIX (any HTTP status).
+function isRedirectHijack(resp) {
+  if (!resp) return false;
+  if (resp.type === 'opaqueredirect') return true;
+  return resp.status >= 300 && resp.status < 400;
+}
+
+function hasJsonContentType(resp) {
+  const ct = (resp.headers.get('content-type') || '').toLowerCase();
+  return ct.includes('application/json');
+}
+
+function hasStreamContentType(resp) {
+  const ct = (resp.headers.get('content-type') || '').toLowerCase();
+  return ct.includes('application/x-ndjson');
+}
+
+function stopAndShowRefresh(title, bodyHtml, statusText) {
+  manualStop = true;
+  connected = false;
+  connecting = false;
+  clearReconnect();
+  if (abort) abort.abort();
+  setStatus(statusText || 'refresh required', 'warn');
+  showOverlay(title, bodyHtml, [
+    {
+      label: 'Refresh',
+      onClick: () => location.reload(),
+    },
+  ]);
+}
+
+// The proxy can replace API responses with a reminder page or redirect them to
+// another origin. Either way the browser received a reply, but not our
+// protocol, so the only reliable recovery is a full refresh.
 async function checkClientResponse(resp, opts) {
   const silent = opts && opts.silent;
+  if (isRedirectHijack(resp)) {
+    if (!silent) unexpectedResponseDetected();
+    return false;
+  }
+  if (!hasJsonContentType(resp)) {
+    if (!silent) unexpectedResponseDetected();
+    return false;
+  }
   const text = await safeText(resp);
   if (!isOurs(text)) {
-    if (!silent) nagDetected();
+    if (!silent) unexpectedResponseDetected();
     return false;
   }
   let msg;
   try {
     msg = JSON.parse(text);
   } catch (e) {
-    if (!silent) nagDetected();
+    if (!silent) unexpectedResponseDetected();
     return false;
   }
   if (!msg || msg.m !== 'WT1') {
-    if (!silent) nagDetected();
+    if (!silent) unexpectedResponseDetected();
     return false;
   }
   if (resp.status === 401) {
@@ -215,35 +258,20 @@ async function checkClientResponse(resp, opts) {
   return { status: resp.status, msg };
 }
 
-function nagDetected() {
-  manualStop = true;
-  connected = false;
-  connecting = false;
-  clearReconnect();
-  if (abort) abort.abort();
-  setStatus('blocked', 'warn');
-  const here = location.href;
-  showOverlay(
-    'Corporate reminder page detected',
-    'A response was replaced by the network acknowledgement page. To continue:' +
-      '<ol>' +
-      '<li>Open <a href="' +
-      here +
-      '" target="_blank" rel="noopener" style="color:var(--accent)">this page</a>' +
-      ' in a new tab and click <b>Acknowledged</b>.</li>' +
-      '<li>Come back here and press <b>Reconnect</b> (no reload needed — your session is intact).</li>' +
-      '</ol>',
-    [
-      { label: 'Open acknowledge page', href: here, secondary: true },
-      {
-        label: 'Reconnect',
-        onClick: () => {
-          hideOverlay();
-          manualStop = false;
-          connect();
-        },
-      },
-    ]
+function unexpectedResponseDetected() {
+  stopAndShowRefresh(
+    'Refresh required',
+    'The network returned an unexpected response for this terminal. Refresh this page. ' +
+      'If your network shows an acknowledgement page, complete it and then return here.',
+    'refresh required'
+  );
+}
+
+function connectionLostDetected() {
+  stopAndShowRefresh(
+    'Connection lost',
+    "We couldn't reconnect to this terminal after several attempts. Refresh this page to try again.",
+    'connection lost'
   );
 }
 
@@ -326,23 +354,32 @@ async function connect() {
       headers: authHeaders(),
       signal: myAbort.signal,
       cache: 'no-store',
+      redirect: 'manual',
     });
   } catch (e) {
     connecting = false;
     return scheduleReconnect();
   }
 
+  if (isRedirectHijack(resp)) {
+    connecting = false;
+    return unexpectedResponseDetected();
+  }
   if (resp.status === 401) {
     connecting = false;
     const txt = await safeText(resp);
-    if (!isOurs(txt)) return nagDetected();
+    if (!isOurs(txt)) return unexpectedResponseDetected();
     return showAuthError();
+  }
+  if (!hasStreamContentType(resp)) {
+    connecting = false;
+    return unexpectedResponseDetected();
   }
   if (!resp.ok || !resp.body) {
     // Non-OK or empty body: the replacement page is usually HTML, not our stream.
     connecting = false;
     const txt = await safeText(resp);
-    if (!isOurs(txt)) return nagDetected();
+    if (!isOurs(txt)) return unexpectedResponseDetected();
     return scheduleReconnect();
   }
 
@@ -352,6 +389,7 @@ async function connect() {
   let gotMagic = false;
   connected = true;
   connecting = false;
+  reconnectAttempts = 0;
   reconnectDelay = 1000;
   setStatus('connected', 'ok');
   statusHideTimer = setTimeout(() => {
@@ -370,13 +408,13 @@ async function connect() {
         if (buf.length < MAGIC_PREFIX.length) {
           if (!MAGIC_PREFIX.startsWith(buf)) {
             connected = false;
-            return nagDetected();
+            return unexpectedResponseDetected();
           }
           continue;
         }
         if (!buf.startsWith(MAGIC_PREFIX)) {
           connected = false;
-          return nagDetected();
+          return unexpectedResponseDetected();
         }
         gotMagic = true;
       }
@@ -438,6 +476,10 @@ function handleFrame(line) {
 function scheduleReconnect() {
   if (manualStop || connected || connecting) return;
   clearReconnect();
+  reconnectAttempts += 1;
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    return connectionLostDetected();
+  }
   setStatus('reconnecting…', 'warn');
   reconnectTimer = setTimeout(connect, reconnectDelay);
   reconnectDelay = Math.min(reconnectDelay * 2, 15000);
@@ -595,6 +637,7 @@ async function sendInput(payload) {
       ),
       keepalive: false,
       body: new TextEncoder().encode(payload),
+      redirect: 'manual',
     });
     await checkClientResponse(r);
   } catch (e) {
@@ -617,6 +660,7 @@ async function sendResize(silent) {
       method: 'POST',
       headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
       body: JSON.stringify(dims),
+      redirect: 'manual',
     });
     await checkClientResponse(r, { silent });
   } catch (e) {

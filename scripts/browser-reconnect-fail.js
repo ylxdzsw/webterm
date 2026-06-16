@@ -1,18 +1,13 @@
 'use strict';
 
-// Simulate the corporate proxy hijacking requests with an HTML "acknowledge"
-// page, and verify the frontend detects it and requires a refresh instead of
-// dumping HTML into the terminal.
+// Simulate repeated stream-connection failures and verify the frontend stops
+// retrying forever and instead asks the user to refresh.
 
 const puppeteer = require('puppeteer-core');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
 const TOKEN = process.env.SMOKE_TOKEN || 'testtoken';
 const CHROME = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
-
-const NAG_HTML =
-  '<!DOCTYPE html><html><body><h1>Corporate Reminder</h1>' +
-  '<p>Please click Acknowledged to continue.</p></body></html>';
 
 (async () => {
   const browser = await puppeteer.launch({
@@ -27,25 +22,25 @@ const NAG_HTML =
 
   await page.setRequestInterception(true);
   page.on('request', (req) => {
-    // The first authed calls on load are /api/resize then /api/stream; hijack
-    // them with the nag page (status 200, text/html) like the proxy would.
-    if (
-      req.url().includes('/api/stream') ||
-      req.url().includes('/api/resize') ||
-      req.url().includes('/api/input')
-    ) {
-      req.respond({
-        status: 200,
-        contentType: 'text/html; charset=utf-8',
-        body: NAG_HTML,
-      });
+    if (req.url().includes('/api/stream')) {
+      req.abort('failed');
     } else {
       req.continue();
     }
   });
 
   await page.goto(URL, { waitUntil: 'domcontentloaded' });
-  await new Promise((r) => setTimeout(r, 1500));
+  await page.waitForFunction(
+    () => {
+      const o = document.getElementById('overlay');
+      return (
+        o &&
+        !o.classList.contains('hidden') &&
+        /connection lost/i.test(document.getElementById('overlay-title').textContent)
+      );
+    },
+    { timeout: 12000 }
+  );
 
   const result = await page.evaluate(() => {
     const o = document.getElementById('overlay');
@@ -65,10 +60,10 @@ const NAG_HTML =
   console.log('hasRefresh    :', result.hasRefresh);
 
   const ok =
-    result.overlayVisible && /refresh required/i.test(result.title) && result.hasRefresh;
-  console.log(ok ? '\nNAG-DETECT: PASS' : '\nNAG-DETECT: FAIL');
+    result.overlayVisible && /connection lost/i.test(result.title) && result.hasRefresh;
+  console.log(ok ? '\nRECONNECT-FAIL: PASS' : '\nRECONNECT-FAIL: FAIL');
   process.exit(ok ? 0 : 1);
 })().catch((e) => {
-  console.error('nag test crashed:', e);
+  console.error('reconnect fail test crashed:', e);
   process.exit(2);
 });

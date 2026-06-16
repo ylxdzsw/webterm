@@ -1,18 +1,15 @@
 'use strict';
 
-// Simulate the corporate proxy hijacking requests with an HTML "acknowledge"
-// page, and verify the frontend detects it and requires a refresh instead of
-// dumping HTML into the terminal.
+// Simulate the proxy redirecting API calls to a different origin and verify the
+// frontend requires a refresh instead of silently retrying.
 
 const puppeteer = require('puppeteer-core');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
 const TOKEN = process.env.SMOKE_TOKEN || 'testtoken';
 const CHROME = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
-
-const NAG_HTML =
-  '<!DOCTYPE html><html><body><h1>Corporate Reminder</h1>' +
-  '<p>Please click Acknowledged to continue.</p></body></html>';
+const REDIRECT_TARGET =
+  process.env.NAG_REDIRECT_TARGET || 'https://example.com/acknowledge';
 
 (async () => {
   const browser = await puppeteer.launch({
@@ -27,17 +24,16 @@ const NAG_HTML =
 
   await page.setRequestInterception(true);
   page.on('request', (req) => {
-    // The first authed calls on load are /api/resize then /api/stream; hijack
-    // them with the nag page (status 200, text/html) like the proxy would.
     if (
       req.url().includes('/api/stream') ||
       req.url().includes('/api/resize') ||
       req.url().includes('/api/input')
     ) {
       req.respond({
-        status: 200,
-        contentType: 'text/html; charset=utf-8',
-        body: NAG_HTML,
+        status: 302,
+        headers: {
+          Location: REDIRECT_TARGET,
+        },
       });
     } else {
       req.continue();
@@ -66,9 +62,9 @@ const NAG_HTML =
 
   const ok =
     result.overlayVisible && /refresh required/i.test(result.title) && result.hasRefresh;
-  console.log(ok ? '\nNAG-DETECT: PASS' : '\nNAG-DETECT: FAIL');
+  console.log(ok ? '\nNAG-REDIRECT: PASS' : '\nNAG-REDIRECT: FAIL');
   process.exit(ok ? 0 : 1);
 })().catch((e) => {
-  console.error('nag test crashed:', e);
+  console.error('nag redirect test crashed:', e);
   process.exit(2);
 });
