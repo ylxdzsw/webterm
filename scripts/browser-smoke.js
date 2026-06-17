@@ -63,12 +63,12 @@ async function waitFor(fn, timeoutMs = 3000) {
     window.__webtermNotificationPermission = 'default';
     window.__webtermNotificationPermissionRequests = 0;
 
-    function FakeNotification(title, opts) {
+    function FakeNotification(title, opts = {}) {
       window.__webtermNotifications.push({
         title,
-        body: opts && opts.body,
-        icon: opts && opts.icon,
-        tag: opts && opts.tag,
+        body: opts.body,
+        icon: opts.icon,
+        tag: opts.tag,
       });
     }
     Object.defineProperty(FakeNotification, 'permission', {

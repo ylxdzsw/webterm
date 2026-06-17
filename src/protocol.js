@@ -16,7 +16,7 @@ const MAGIC_PREFIX = '{"m":"' + MAGIC + '"';
 // Build one newline-delimited frame. `m` (magic) is always first so the
 // serialized string starts with MAGIC_PREFIX.
 function frame(obj) {
-  return JSON.stringify(Object.assign({ m: MAGIC }, obj)) + '\n';
+  return JSON.stringify({ m: MAGIC, ...obj }) + '\n';
 }
 
 module.exports = { MAGIC, MAGIC_PREFIX, frame };

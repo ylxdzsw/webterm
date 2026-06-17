@@ -63,7 +63,7 @@ function clearToken() {
   localStorage.removeItem('webterm_token');
 }
 function authHeaders() {
-  return { Authorization: 'Bearer ' + getToken() };
+  return { Authorization: `Bearer ${getToken()}` };
 }
 
 // ---------------------------------------------------------------- terminal
@@ -293,19 +293,22 @@ function isOurs(text) {
 }
 
 function isRedirectHijack(resp) {
-  if (!resp) return false;
-  if (resp.type === 'opaqueredirect') return true;
-  return resp.status >= 300 && resp.status < 400;
+  return Boolean(
+    resp && (resp.type === 'opaqueredirect' || (resp.status >= 300 && resp.status < 400))
+  );
+}
+
+function hasContentType(resp, expected) {
+  const ct = (resp.headers.get('content-type') || '').toLowerCase();
+  return ct.includes(expected);
 }
 
 function hasJsonContentType(resp) {
-  const ct = (resp.headers.get('content-type') || '').toLowerCase();
-  return ct.includes('application/json');
+  return hasContentType(resp, 'application/json');
 }
 
 function hasStreamContentType(resp) {
-  const ct = (resp.headers.get('content-type') || '').toLowerCase();
-  return ct.includes('application/x-ndjson');
+  return hasContentType(resp, 'application/x-ndjson');
 }
 
 function stopAndShowRefresh(title, bodyContent, statusText) {
@@ -313,7 +316,7 @@ function stopAndShowRefresh(title, bodyContent, statusText) {
   connected = false;
   connecting = false;
   clearReconnect();
-  if (abort) abort.abort();
+  abort?.abort();
   setStatus(statusText || 'refresh required', 'warn');
   showOverlay(title, bodyContent, [
     {
@@ -326,8 +329,7 @@ function stopAndShowRefresh(title, bodyContent, statusText) {
 // The proxy can replace API responses with a reminder page or redirect them to
 // another origin. Either way the browser received a reply, but not our
 // protocol, so the only reliable recovery is a full refresh.
-async function checkClientResponse(resp, opts) {
-  const silent = opts && opts.silent;
+async function checkClientResponse(resp, { silent = false } = {}) {
   if (isRedirectHijack(resp)) {
     if (!silent) unexpectedResponseDetected();
     return false;
@@ -383,7 +385,7 @@ function showAuthError() {
   connected = false;
   connecting = false;
   clearReconnect();
-  if (abort) abort.abort();
+  abort?.abort();
   setStatus('unauthorized', 'err');
   showOverlay('Unauthorized', 'The access token was rejected. Enter it again to continue.', [
     {
@@ -409,9 +411,7 @@ function showReload(code) {
   els.status.classList.add('hidden');
   showOverlay(
     'Session ended',
-    'The program exited (code ' +
-      code +
-      '). Reload to start a fresh shell. You can dismiss this to scroll and copy the output.',
+    `The program exited (code ${code}). Reload to start a fresh shell. You can dismiss this to scroll and copy the output.`,
     [
       {
         label: 'Reload',
@@ -433,13 +433,7 @@ async function connect() {
   hideOverlay();
   setStatus('connecting…', '');
 
-  if (abort) {
-    try {
-      abort.abort();
-    } catch (e) {
-      /* ignore */
-    }
-  }
+  abort?.abort();
 
   // Make the backend PTY match our viewport before we snapshot/stream so the
   // first paint is at the right size.
@@ -568,7 +562,7 @@ function handleFrame(line) {
       term.options.disableStdin = true;
       term.options.cursorBlink = false;
       clearReconnect();
-      if (abort) abort.abort();
+      abort?.abort();
       showReload(msg.code);
       break;
     default:
@@ -650,7 +644,7 @@ function queueImmediateInput(data) {
 function isSgrMotion(seq) {
   const m = SGR_MOUSE_RE.exec(seq);
   if (!m) return false;
-  return (parseInt(m[1], 10) & 32) !== 0 && m[4] === 'M';
+  return (Number.parseInt(m[1], 10) & 32) !== 0 && m[4] === 'M';
 }
 
 function isMotionOnlyPending() {
@@ -775,10 +769,10 @@ async function sendInput(payload) {
   try {
     const r = await fetch('api/input', {
       method: 'POST',
-      headers: Object.assign(
-        { 'Content-Type': 'application/octet-stream; charset=utf-8' },
-        authHeaders()
-      ),
+      headers: {
+        'Content-Type': 'application/octet-stream; charset=utf-8',
+        ...authHeaders(),
+      },
       keepalive: false,
       body: new TextEncoder().encode(payload),
       redirect: 'manual',
@@ -802,7 +796,7 @@ async function sendResize(silent) {
   try {
     const r = await fetch('api/resize', {
       method: 'POST',
-      headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify(dims),
       redirect: 'manual',
     });

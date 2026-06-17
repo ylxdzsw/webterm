@@ -8,8 +8,8 @@ const { frame, MAGIC_PREFIX } = require('./protocol');
 const { createStreamSubscriber, parseBufferLimit } = require('./stream-subscriber');
 
 const HOST = process.env.WEBTERM_HOST || '127.0.0.1';
-const PORT = parseInt(process.env.WEBTERM_PORT || '8080', 10);
-const KEEPALIVE_MS = parseInt(process.env.WEBTERM_KEEPALIVE_MS || '15000', 10);
+const PORT = Number.parseInt(process.env.WEBTERM_PORT || '8080', 10);
+const KEEPALIVE_MS = Number.parseInt(process.env.WEBTERM_KEEPALIVE_MS || '15000', 10);
 const SUBSCRIBER_BUFFER_BYTES = parseBufferLimit(process.env.WEBTERM_SUBSCRIBER_BUFFER_BYTES);
 const CSP = [
   "default-src 'self'",
@@ -32,10 +32,10 @@ const CSP = [
 // shell at `/`.
 const SD_LISTEN_FDS_START = 3;
 function socketActivationFd() {
-  const n = parseInt(process.env.LISTEN_FDS || '0', 10);
+  const n = Number.parseInt(process.env.LISTEN_FDS || '0', 10);
   if (!Number.isFinite(n) || n < 1) return null;
   const pidEnv = process.env.LISTEN_PID;
-  if (pidEnv && parseInt(pidEnv, 10) !== process.pid) return null;
+  if (pidEnv && Number.parseInt(pidEnv, 10) !== process.pid) return null;
   // We only ever configure a single socket per service instance.
   return SD_LISTEN_FDS_START;
 }
@@ -120,12 +120,13 @@ function auth(req, res, next) {
   const h = req.get('authorization');
   if (h && h.startsWith('Bearer ')) tok = h.slice(7);
   if (!checkToken(tok)) {
-    return res
-      .status(401)
-      .type('application/json')
-      .send(frame({ t: 'error', ok: false, error: 'unauthorized' }));
+    return jsonFrame(res, { t: 'error', ok: false, error: 'unauthorized' }, 401);
   }
   next();
+}
+
+function jsonFrame(res, body, status = 200) {
+  return res.status(status).type('application/json').send(frame(body));
 }
 
 // --- Static UI (no auth: it contains no secrets; the token is entered by the
@@ -148,7 +149,7 @@ app.use(
 );
 
 app.get('/api/health', (req, res) => {
-  res.type('application/json').send(frame({ t: 'health', ok: true }));
+  jsonFrame(res, { t: 'health', ok: true });
 });
 
 // --- Output channel: a single long-lived chunked HTTP/1.1 response.
@@ -226,36 +227,25 @@ app.get('/api/stream', auth, (req, res) => {
 // connection (keep-alive) and coalesces rapid keystrokes / mouse motion.
 app.post('/api/input', auth, express.raw({ type: 'application/octet-stream', limit: '1mb' }), (req, res) => {
   if (session.ended) {
-    return res
-      .status(409)
-      .type('application/json')
-      .send(frame({ t: 'ack', ok: false, error: 'ended' }));
+    return jsonFrame(res, { t: 'ack', ok: false, error: 'ended' }, 409);
   }
   const ct = req.get('content-type') || '';
   if (!ct.includes('application/octet-stream')) {
-    return res
-      .status(415)
-      .type('application/json')
-      .send(frame({ t: 'ack', ok: false, error: 'unsupported media type' }));
+    return jsonFrame(res, { t: 'ack', ok: false, error: 'unsupported media type' }, 415);
   }
   if (Buffer.isBuffer(req.body) && req.body.length) {
     session.write(req.body.toString('utf8'));
   }
-  res.type('application/json').send(frame({ t: 'ack', ok: true, seq: session.bytes }));
+  jsonFrame(res, { t: 'ack', ok: true, seq: session.bytes });
 });
 
 app.post('/api/resize', auth, express.json({ limit: '1kb' }), (req, res) => {
   if (session.ended) {
-    return res
-      .status(409)
-      .type('application/json')
-      .send(frame({ t: 'ack', ok: false, error: 'ended' }));
+    return jsonFrame(res, { t: 'ack', ok: false, error: 'ended' }, 409);
   }
   const { cols, rows } = req.body || {};
   session.resize(cols, rows);
-  res
-    .type('application/json')
-    .send(frame({ t: 'ack', ok: true, cols: session.cols, rows: session.rows }));
+  jsonFrame(res, { t: 'ack', ok: true, cols: session.cols, rows: session.rows });
 });
 
 const fd = socketActivationFd();

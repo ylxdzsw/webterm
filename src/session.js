@@ -9,7 +9,7 @@ const { frame } = require('./protocol');
 
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
-const SCROLLBACK = parseInt(process.env.WEBTERM_SCROLLBACK || '2000', 10);
+const SCROLLBACK = Number.parseInt(process.env.WEBTERM_SCROLLBACK || '2000', 10);
 
 // The single persistent terminal session owned by this server process.
 //
@@ -60,13 +60,14 @@ class Session {
     const resolved = resolveShell();
     this.command = resolved.command;
 
-    const env = Object.assign({}, process.env, {
+    const env = {
+      ...process.env,
       // Make full-screen TUIs (opencode, claude code, vim, htop, ...) behave:
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       LANG: process.env.WEBTERM_LANG || process.env.LANG || 'C.UTF-8',
       SHELL: resolved.file,
-    });
+    };
     // Don't leak our own config knobs into the child shell.
     delete env.WEBTERM_TOKEN;
 
@@ -168,10 +169,6 @@ class Session {
     }
   }
 
-  addSubscriber(sub) {
-    this.subscribers.add(sub);
-  }
-
   removeSubscriber(sub) {
     this.subscribers.delete(sub);
   }
@@ -181,8 +178,8 @@ class Session {
   }
 
   resize(cols, rows) {
-    cols = clamp(parseInt(cols, 10), 1, 1000);
-    rows = clamp(parseInt(rows, 10), 1, 1000);
+    cols = clamp(Number.parseInt(cols, 10), 1, 1000);
+    rows = clamp(Number.parseInt(rows, 10), 1, 1000);
     if (!cols || !rows) return;
     if (cols === this.cols && rows === this.rows) return;
     this.cols = cols;

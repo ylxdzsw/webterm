@@ -3,14 +3,15 @@
 const DEFAULT_BUFFER_BYTES = 4 * 1024 * 1024;
 
 function parseBufferLimit(value) {
-  const n = parseInt(value || String(DEFAULT_BUFFER_BYTES), 10);
+  const n = Number.parseInt(value ?? String(DEFAULT_BUFFER_BYTES), 10);
   if (!Number.isFinite(n) || n <= 0) return DEFAULT_BUFFER_BYTES;
   return n;
 }
 
-function createStreamSubscriber(res, opts = {}) {
-  const maxBufferBytes = opts.maxBufferBytes || DEFAULT_BUFFER_BYTES;
-  const onClose = typeof opts.onClose === 'function' ? opts.onClose : () => {};
+function createStreamSubscriber(
+  res,
+  { maxBufferBytes = DEFAULT_BUFFER_BYTES, onClose = () => {} } = {}
+) {
   let queue = [];
   let queuedBytes = 0;
   let waitingForDrain = false;
