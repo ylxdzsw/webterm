@@ -59,6 +59,32 @@ async function waitFor(fn, timeoutMs = 3000) {
 
   await page.evaluateOnNewDocument((tok) => {
     localStorage.setItem('webterm_token', tok);
+    window.__webtermNotifications = [];
+    window.__webtermNotificationPermission = 'default';
+    window.__webtermNotificationPermissionRequests = 0;
+
+    function FakeNotification(title, opts) {
+      window.__webtermNotifications.push({
+        title,
+        body: opts && opts.body,
+        icon: opts && opts.icon,
+        tag: opts && opts.tag,
+      });
+    }
+    Object.defineProperty(FakeNotification, 'permission', {
+      get() {
+        return window.__webtermNotificationPermission;
+      },
+    });
+    FakeNotification.requestPermission = () => {
+      window.__webtermNotificationPermissionRequests += 1;
+      window.__webtermNotificationPermission = 'granted';
+      return Promise.resolve('granted');
+    };
+    Object.defineProperty(window, 'Notification', {
+      configurable: true,
+      value: FakeNotification,
+    });
   }, TOKEN);
 
   await page.goto(URL, { waitUntil: 'domcontentloaded' });
@@ -69,6 +95,58 @@ async function waitFor(fn, timeoutMs = 3000) {
     { timeout: 5000 }
   );
   await sleep(1500);
+
+  const focusedNotification = await page.evaluate(async () => {
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      get() {
+        return false;
+      },
+    });
+    document.hasFocus = () => true;
+    await window.triggerTerminalNotification('focused alert');
+    return {
+      notifications: window.__webtermNotifications.length,
+      permissionRequests: window.__webtermNotificationPermissionRequests,
+    };
+  });
+  if (
+    focusedNotification.notifications !== 0 ||
+    focusedNotification.permissionRequests !== 0
+  ) {
+    errors.push(
+      'focused notification should not prompt or notify: ' +
+        JSON.stringify(focusedNotification)
+    );
+  }
+
+  const backgroundNotification = await page.evaluate(async () => {
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      get() {
+        return true;
+      },
+    });
+    document.hasFocus = () => false;
+    window.handleOsc9('Codex finished');
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await window.triggerTerminalNotification('Codex finished again');
+    return {
+      notifications: window.__webtermNotifications.slice(),
+      permissionRequests: window.__webtermNotificationPermissionRequests,
+    };
+  });
+  if (
+    backgroundNotification.permissionRequests !== 1 ||
+    backgroundNotification.notifications.length !== 1 ||
+    backgroundNotification.notifications[0].title !== 'Webterm' ||
+    backgroundNotification.notifications[0].body !== 'Codex finished'
+  ) {
+    errors.push(
+      'background notification did not request once and notify once: ' +
+        JSON.stringify(backgroundNotification)
+    );
+  }
 
   const inputStart = inputPayloads.length;
   await page.evaluate(() => {

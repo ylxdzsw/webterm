@@ -35,6 +35,7 @@ const INPUT_BURST_MAX_MS = 33;
 const MOUSE_MOTION_FLUSH_MS = 33;
 const RESIZE_DEBOUNCE_MS = 150;
 const MAX_RECONNECT_ATTEMPTS = 4;
+const NOTIFICATION_COOLDOWN_MS = 5000;
 
 // SGR mouse: ESC [ < Pb ; Px ; Py M|m  (1006/1016). Pb has bit 5 set on MOVE.
 const SGR_MOUSE_RE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])/;
@@ -79,6 +80,79 @@ const fitAddon = new FitAddon.FitAddon();
 term.loadAddon(fitAddon);
 term.open(els.terminal);
 fitAddon.fit();
+
+// ---------------------------------------------------------------- desktop notifications
+let lastNotificationAt = 0;
+let notificationPermissionRequest = null;
+let notificationPromptAttempted = false;
+
+function notificationsSupported() {
+  return typeof window.Notification === 'function';
+}
+
+function pageInactiveForNotification() {
+  return document.hidden || !document.hasFocus();
+}
+
+async function notificationPermission() {
+  if (!notificationsSupported()) return 'denied';
+  if (window.Notification.permission !== 'default') return window.Notification.permission;
+  if (notificationPromptAttempted) return 'default';
+  if (typeof window.Notification.requestPermission !== 'function') return 'denied';
+  notificationPromptAttempted = true;
+  if (!notificationPermissionRequest) {
+    notificationPermissionRequest = window.Notification.requestPermission()
+      .catch(() => 'denied')
+      .finally(() => {
+        notificationPermissionRequest = null;
+      });
+  }
+  return notificationPermissionRequest;
+}
+
+async function triggerTerminalNotification(body) {
+  if (!pageInactiveForNotification()) return false;
+
+  const now = Date.now();
+  if (now - lastNotificationAt < NOTIFICATION_COOLDOWN_MS) return false;
+  lastNotificationAt = now;
+
+  const permission = await notificationPermission();
+  if (permission !== 'granted') return false;
+
+  try {
+    const text = String(body || '').trim() || 'Terminal needs attention';
+    new window.Notification('Webterm', {
+      body: text,
+      icon: 'favicon.svg',
+      tag: 'webterm-terminal-alert',
+    });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function handleOsc9(data) {
+  const text = String(data || '').trim();
+  if (!text) return false;
+
+  // OSC 9 has several terminal-specific subcommands. Treat bare payloads as
+  // notifications, but ignore common non-notification forms like cwd/progress.
+  const subcommand = /^(\d+);/.exec(text);
+  if (subcommand && (subcommand[1] === '4' || subcommand[1] === '9')) return false;
+
+  triggerTerminalNotification(subcommand ? text.slice(subcommand[0].length) : text);
+  return false;
+}
+
+term.onBell(() => {
+  triggerTerminalNotification('Terminal needs attention');
+});
+
+if (term.parser && typeof term.parser.registerOscHandler === 'function') {
+  term.parser.registerOscHandler(9, handleOsc9);
+}
 
 // Ctrl+C copies when text is selected, then clears selection; a second Ctrl+C
 // sends SIGINT. Ctrl+V uses the browser paste event (bracketed paste, etc.).
