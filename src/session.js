@@ -9,7 +9,7 @@ const { frame } = require('./protocol');
 
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
-const SCROLLBACK = Number.parseInt(process.env.WEBTERM_SCROLLBACK || '2000', 10);
+const SCROLLBACK = 5000;
 
 // The single persistent terminal session owned by this server process.
 //
