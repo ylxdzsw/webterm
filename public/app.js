@@ -72,14 +72,14 @@ const term = new Terminal({
   allowProposedApi: true,
   scrollback: 5000,
   fontFamily:
-    '"Sarasa Term SC", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+    'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Sarasa Term SC", monospace',
   fontSize: 14,
   theme: { background: '#0b0e14', foreground: '#c9d1d9' },
 });
 const fitAddon = new FitAddon.FitAddon();
 term.loadAddon(fitAddon);
-// term.open() is deferred until the CJK webfont loads so xterm measures
-// glyph metrics from Sarasa Term SC, not a fallback font. See start() below.
+// term.open() runs immediately; Sarasa Term SC is a lazy CJK fallback
+// scoped via unicode-range in style.css. See the bottom of this file.
 
 // ---------------------------------------------------------------- desktop notifications
 let lastNotificationAt = 0;
@@ -840,31 +840,24 @@ document.addEventListener('keydown', (ev) => {
 
 // ---------------------------------------------------------------- go
 // Prompt for the access token immediately so the user can enter it while
-// the webfont loads in the background.
+// the terminal opens.
 getToken();
 
-// Wait for the CJK webfont before opening the terminal so xterm measures
-// correct glyph metrics. Fall back after 5s so the terminal is usable even
-// if the font is slow or unavailable; refit once it eventually loads.
-const FONT_FACE = '"Sarasa Term SC"';
-const fontReady = document.fonts
-  ? Promise.all([
-      document.fonts.load(`14px ${FONT_FACE}`),
-      document.fonts.load(`bold 14px ${FONT_FACE}`),
-    ])
-  : Promise.resolve();
+// Open immediately. xterm measures cell metrics from the system mono stack
+// (synchronous), so English-only sessions download 0 bytes of CJK webfont.
+// Sarasa Term SC is scoped to CJK codepoints via unicode-range and fetched
+// lazily only when a CJK glyph is rendered.
+term.open(els.terminal);
+fitAddon.fit();
+term.focus();
+connect();
 
-let started = false;
-function start() {
-  if (started) return;
-  started = true;
-  term.open(els.terminal);
-  fitAddon.fit();
-  term.focus();
-  connect();
+// xterm renders glyphs to a canvas, which does not auto-swap when a webfont
+// finishes loading. Redraw all rows once any webfont loads so CJK glyphs
+// first drawn from an OS fallback get re-rasterized from Sarasa. Only fires
+// when a @font-face actually fetches (i.e. CJK was displayed).
+if (document.fonts) {
+  document.fonts.addEventListener('loadingdone', () => {
+    term.refresh(0, term.rows - 1);
+  });
 }
-
-Promise.race([fontReady, new Promise((r) => setTimeout(r, 5000))]).finally(start);
-fontReady.then(() => {
-  if (started) fitAddon.fit();
-});
