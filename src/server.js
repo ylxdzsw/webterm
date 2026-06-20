@@ -3,7 +3,7 @@
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
-const { Session } = require('./session');
+const { Session, MAX_READ_ROWS } = require('./session');
 const { frame, MAGIC_PREFIX } = require('./protocol');
 const { createStreamSubscriber, parseBufferLimit } = require('./stream-subscriber');
 
@@ -129,6 +129,13 @@ function jsonFrame(res, body, status = 200) {
   return res.status(status).type('application/json').send(frame(body));
 }
 
+function parseTailRows(value, fallback = 200) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  if (parsed < 0) return fallback;
+  return Math.min(parsed, MAX_READ_ROWS);
+}
+
 // --- Static UI (no auth: it contains no secrets; the token is entered by the
 // user and sent on the API calls). xterm assets are served locally so we never
 // depend on a CDN that the proxy would hijack. Behind nginx the per-slot path
@@ -150,6 +157,14 @@ app.use(
 
 app.get('/api/health', (req, res) => {
   jsonFrame(res, { t: 'health', ok: true });
+});
+
+app.get('/api/snapshot', auth, (req, res) => {
+  res.type('text/plain; charset=utf-8').send(session.visibleText());
+});
+
+app.get('/api/state', auth, (req, res) => {
+  res.json(session.describeState(parseTailRows(req.query.tailRows)));
 });
 
 // --- Output channel: a single long-lived chunked HTTP/1.1 response.

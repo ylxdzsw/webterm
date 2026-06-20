@@ -11,6 +11,8 @@ const {
   parseBufferLimit,
 } = require('../src/stream-subscriber');
 
+const SERVER_MODULE = require.resolve('../src/server');
+
 function fakeDeps(shell, opts = {}) {
   return {
     os: {
@@ -27,6 +29,32 @@ function fakeDeps(shell, opts = {}) {
       },
     },
   };
+}
+
+function createTestSession(cols = 5, rows = 3) {
+  const session = Object.create(Session.prototype);
+  session.cols = cols;
+  session.rows = rows;
+  session.bytes = 0;
+  session.subscribers = new Set();
+  session.ended = false;
+  session.exitCode = null;
+  session.command = '/bin/bash -l';
+  session.title = '';
+  session.headless = new Terminal({
+    cols,
+    rows,
+    allowProposedApi: true,
+    scrollback: 100,
+  });
+  session.serializer = new SerializeAddon();
+  session.headless.loadAddon(session.serializer);
+  session.onExit = null;
+  return session;
+}
+
+function writeHeadless(term, data) {
+  return new Promise((resolve) => term.write(data, resolve));
 }
 
 function testResolveShell() {
@@ -60,23 +88,7 @@ function testResolveShell() {
 }
 
 async function testSnapshotAttachOrdering() {
-  const session = Object.create(Session.prototype);
-  session.cols = 80;
-  session.rows = 24;
-  session.bytes = 0;
-  session.subscribers = new Set();
-  session.ended = false;
-  session.exitCode = null;
-  session.command = '/bin/bash -l';
-  session.title = '';
-  session.headless = new Terminal({
-    cols: session.cols,
-    rows: session.rows,
-    allowProposedApi: true,
-    scrollback: 100,
-  });
-  session.serializer = new SerializeAddon();
-  session.headless.loadAddon(session.serializer);
+  const session = createTestSession(80, 24);
 
   try {
     const liveLines = [];
@@ -165,13 +177,269 @@ function testParseBufferLimit() {
   assert.strictEqual(parseBufferLimit('not-a-number'), DEFAULT_BUFFER_BYTES);
 }
 
+async function testVisibleTextAndStructuredState() {
+  const session = createTestSession(5, 3);
+  try {
+    await writeHeadless(session.headless, 'hello\nworld\nfoo\nbar');
+
+    assert.strictEqual(session.visibleText(), '    f\noo\n  bar');
+
+    const state = session.describeState(2);
+    assert.strictEqual(state.activeBuffer, 'normal');
+    assert.deepStrictEqual(state.cursor, { x: 5, y: 2 });
+    assert.deepStrictEqual(state.buffers.active.rows, [
+      { index: 3, wrapped: false, text: '    f' },
+      { index: 4, wrapped: true, text: 'oo' },
+      { index: 5, wrapped: false, text: '  bar' },
+    ]);
+    assert.deepStrictEqual(state.buffers.normal.tailRows, [
+      { index: 4, wrapped: true, text: 'oo' },
+      { index: 5, wrapped: false, text: '  bar' },
+    ]);
+  } finally {
+    session.headless.dispose();
+  }
+}
+
+async function testAlternateBufferStateIncludesNormalTail() {
+  const session = createTestSession(10, 3);
+  try {
+    await writeHeadless(session.headless, 'line1\nline2\nline3\nline4');
+    await writeHeadless(session.headless, '\x1b[?1049hHELLO');
+
+    const state = session.describeState(3);
+    assert.strictEqual(state.activeBuffer, 'alternate');
+    assert.deepStrictEqual(state.buffers.active.rows, [
+      { index: 0, wrapped: false, text: '' },
+      { index: 1, wrapped: false, text: '         H' },
+      { index: 2, wrapped: true, text: 'ELLO' },
+    ]);
+    assert.deepStrictEqual(state.buffers.normal.tailRows, [
+      { index: 2, wrapped: false, text: '         l' },
+      { index: 3, wrapped: true, text: 'ine3' },
+      { index: 4, wrapped: false, text: '    line4' },
+    ]);
+  } finally {
+    session.headless.dispose();
+  }
+}
+
+async function testEndedSessionStillReadable() {
+  const session = createTestSession(8, 3);
+  try {
+    await writeHeadless(session.headless, 'prompt\nresult');
+    session._onExit(7);
+
+    assert.strictEqual(session.ended, true);
+    assert.strictEqual(session.exitCode, 7);
+    assert.match(session.visibleText(), /prompt/);
+    assert.strictEqual(session.describeState(5).exitCode, 7);
+  } finally {
+    session.headless.dispose();
+  }
+}
+
+async function withServerModule(env, fn) {
+  const oldEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    oldEnv[key] = process.env[key];
+    process.env[key] = value;
+  }
+
+  delete require.cache[SERVER_MODULE];
+  const mod = require('../src/server');
+  try {
+    await fn(mod);
+  } finally {
+    mod.session.destroy();
+    try {
+      await new Promise((resolve) => mod.server.close(resolve));
+    } catch (e) {
+      /* ignore */
+    }
+    delete require.cache[SERVER_MODULE];
+    for (const [key, value] of Object.entries(env)) {
+      if (oldEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = oldEnv[key];
+    }
+  }
+}
+
+function findRouteLayer(app, path, method) {
+  return app.router.stack.find(
+    (layer) => layer.route && layer.route.path === path && layer.route.methods[method]
+  );
+}
+
+function createMockResponse() {
+  return {
+    statusCode: 200,
+    headers: {},
+    body: '',
+    finished: false,
+    set(field, value) {
+      if (typeof field === 'string') this.headers[field.toLowerCase()] = value;
+      else {
+        for (const [k, v] of Object.entries(field)) this.headers[k.toLowerCase()] = v;
+      }
+      return this;
+    },
+    setHeader(field, value) {
+      this.headers[String(field).toLowerCase()] = value;
+    },
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    type(value) {
+      this.headers['content-type'] = value;
+      return this;
+    },
+    json(value) {
+      this.type('application/json; charset=utf-8');
+      this.body = JSON.stringify(value);
+      this.finished = true;
+      return this;
+    },
+    send(value) {
+      this.body = Buffer.isBuffer(value) ? value.toString('utf8') : String(value);
+      this.finished = true;
+      return this;
+    },
+  };
+}
+
+async function invokeRoute(layer, req) {
+  const res = createMockResponse();
+  const handlers = layer.route.stack.map((entry) => entry.handle);
+  let i = 0;
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    function finish() {
+      if (settled) return;
+      settled = true;
+      resolve();
+    }
+    function next(err) {
+      if (err) {
+        settled = true;
+        reject(err);
+        return;
+      }
+      const handler = handlers[i++];
+      if (!handler) {
+        finish();
+        return;
+      }
+      try {
+        const out = handler(req, res, next);
+        if (res.finished) {
+          finish();
+          return;
+        }
+        if (out && typeof out.then === 'function') {
+          out
+            .then(() => {
+              if (res.finished) finish();
+            })
+            .catch((e) => {
+              settled = true;
+              reject(e);
+            });
+        }
+      } catch (e) {
+        settled = true;
+        reject(e);
+      }
+    }
+    next();
+  });
+  return res;
+}
+
+async function testReadOnlyApiEndpoints() {
+  const token = 'testtoken_read_only_api';
+  await withServerModule(
+    {
+      WEBTERM_TOKEN: token,
+      WEBTERM_HOST: '127.0.0.1',
+      WEBTERM_PORT: '18081',
+    },
+    async ({ app, session }) => {
+      await writeHeadless(session.headless, 'alpha\nbeta\ngamma\ndelta');
+      await writeHeadless(session.headless, '\x1b[?1049hALT');
+
+      const snapshotRoute = findRouteLayer(app, '/api/snapshot', 'get');
+      const stateRoute = findRouteLayer(app, '/api/state', 'get');
+
+      assert(snapshotRoute, 'expected /api/snapshot route');
+      assert(stateRoute, 'expected /api/state route');
+
+      const unauthorized = await invokeRoute(snapshotRoute, {
+        get() {
+          return undefined;
+        },
+      });
+      assert.strictEqual(unauthorized.statusCode, 401);
+
+      const snapshot = await invokeRoute(snapshotRoute, {
+        get(name) {
+          return String(name).toLowerCase() === 'authorization' ? `Bearer ${token}` : undefined;
+        },
+      });
+      assert.strictEqual(snapshot.statusCode, 200);
+      assert.match(snapshot.headers['content-type'], /^text\/plain/);
+      const snapshotLines = snapshot.body.split('\n');
+      assert.strictEqual(snapshotLines.length, session.rows);
+      assert.match(snapshotLines[3], /ALT$/);
+
+      const state = await invokeRoute(stateRoute, {
+        query: { tailRows: '5000' },
+        get(name) {
+          return String(name).toLowerCase() === 'authorization' ? `Bearer ${token}` : undefined;
+        },
+      });
+      assert.strictEqual(state.statusCode, 200);
+      assert.match(state.headers['content-type'], /^application\/json/);
+      const parsed = JSON.parse(state.body);
+      assert.strictEqual(parsed.activeBuffer, 'alternate');
+      assert.strictEqual(parsed.buffers.normal.tailRows.length, parsed.buffers.normal.length);
+      assert.strictEqual(parsed.buffers.active.rows.length, session.rows);
+      assert.deepStrictEqual(parsed.buffers.active.rows.slice(0, 4), [
+        { index: 0, wrapped: false, text: '' },
+        { index: 1, wrapped: false, text: '' },
+        { index: 2, wrapped: false, text: '' },
+        { index: 3, wrapped: false, text: snapshotLines[3] },
+      ]);
+
+      const fallback = await invokeRoute(stateRoute, {
+        query: { tailRows: '-3' },
+        get(name) {
+          return String(name).toLowerCase() === 'authorization' ? `Bearer ${token}` : undefined;
+        },
+      });
+      const fallbackParsed = JSON.parse(fallback.body);
+      assert.strictEqual(fallbackParsed.buffers.normal.tailRows.length, parsed.buffers.normal.length);
+      assert.deepStrictEqual(
+        fallbackParsed.buffers.normal.tailRows.slice(-parsed.buffers.normal.tailRows.length),
+        parsed.buffers.normal.tailRows
+      );
+    }
+  );
+}
+
 (async () => {
   testResolveShell();
   await testSnapshotAttachOrdering();
+  await testVisibleTextAndStructuredState();
+  await testAlternateBufferStateIncludesNormalTail();
+  await testEndedSessionStillReadable();
   testStreamBackpressure();
   testStreamOverflow();
   testParseBufferLimit();
+  await testReadOnlyApiEndpoints();
   console.log('UNIT: PASS');
+  process.exit(0);
 })().catch((e) => {
   console.error('UNIT: FAIL');
   console.error(e && e.stack ? e.stack : e);

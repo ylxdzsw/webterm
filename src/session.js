@@ -10,6 +10,7 @@ const { frame } = require('./protocol');
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 const SCROLLBACK = 5000;
+const MAX_READ_ROWS = 1000;
 
 // The single persistent terminal session owned by this server process.
 //
@@ -111,11 +112,6 @@ class Session {
       sub.end();
     }
     this.subscribers.clear();
-    try {
-      this.headless.dispose();
-    } catch (e) {
-      /* ignore */
-    }
     if (this.onExit) {
       try {
         this.onExit(code);
@@ -167,6 +163,69 @@ class Session {
     } catch (e) {
       return '';
     }
+  }
+
+  visibleText() {
+    return this.getViewportRows(this.headless.buffer.active)
+      .map((row) => row.text)
+      .join('\n');
+  }
+
+  describeState(normalTailRows) {
+    const active = this.headless.buffer.active;
+    const normal = this.headless.buffer.normal;
+    const tailCount = clampRowCount(normalTailRows);
+
+    return {
+      title: this.title,
+      command: this.command,
+      ended: this.ended,
+      exitCode: this.exitCode,
+      cols: this.cols,
+      rows: this.rows,
+      activeBuffer: active.type,
+      cursor: {
+        x: active.cursorX,
+        y: active.cursorY,
+      },
+      buffers: {
+        active: {
+          type: active.type,
+          length: active.length,
+          baseY: active.baseY,
+          viewportY: active.viewportY,
+          rows: this.getViewportRows(active),
+        },
+        normal: {
+          type: normal.type,
+          length: normal.length,
+          baseY: normal.baseY,
+          viewportY: normal.viewportY,
+          tailRows: this.getTailRows(normal, tailCount),
+        },
+      },
+    };
+  }
+
+  getViewportRows(buffer) {
+    const start = clamp(buffer.viewportY, 0, buffer.length);
+    return this.getBufferRows(buffer, start, this.rows);
+  }
+
+  getTailRows(buffer, count) {
+    const safeCount = clampRowCount(count);
+    const start = Math.max(0, buffer.length - safeCount);
+    return this.getBufferRows(buffer, start, safeCount);
+  }
+
+  getBufferRows(buffer, start, count) {
+    const safeStart = clamp(Number.parseInt(start, 10), 0, buffer.length);
+    const safeEnd = clamp(safeStart + clampRowCount(count), safeStart, buffer.length);
+    const rows = [];
+    for (let i = safeStart; i < safeEnd; i++) {
+      rows.push(describeBufferLine(buffer.getLine(i), i));
+    }
+    return rows;
   }
 
   removeSubscriber(sub) {
@@ -225,6 +284,23 @@ function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
 }
 
+function clampRowCount(n) {
+  const value = Number.parseInt(n, 10);
+  if (!Number.isFinite(value) || value < 0) return 0;
+  return clamp(value, 0, MAX_READ_ROWS);
+}
+
+function describeBufferLine(line, index) {
+  if (!line) {
+    return { index, wrapped: false, text: '' };
+  }
+  return {
+    index,
+    wrapped: line.isWrapped,
+    text: line.translateToString(true),
+  };
+}
+
 // Always run the account's login shell from passwd, not the parent process's
 // inherited SHELL environment variable. If it is unset or unusable, fail
 // clearly instead of guessing.
@@ -253,4 +329,4 @@ function resolveShell(deps = { fs, os }) {
   return { file, args, command: [file, ...args].join(' ') };
 }
 
-module.exports = { Session, resolveShell };
+module.exports = { Session, resolveShell, MAX_READ_ROWS };
