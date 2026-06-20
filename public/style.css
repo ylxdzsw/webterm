@@ -1,3 +1,19 @@
+@font-face {
+  font-family: "Sarasa Term SC";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(fonts/SarasaTermSC-Regular.woff2) format("woff2");
+}
+
+@font-face {
+  font-family: "Sarasa Term SC";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(fonts/SarasaTermSC-Bold.woff2) format("woff2");
+}
+
 :root {
   --bg: #0b0e14;
   --fg: #c9d1d9;
@@ -16,7 +32,7 @@ body {
   height: 100%;
   background: var(--bg);
   color: var(--fg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-family: "Sarasa Term SC", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 #terminal {
