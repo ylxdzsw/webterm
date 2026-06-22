@@ -2,12 +2,11 @@
 
 // Headless-Chrome test: after the shell exits, the session-ended overlay can be
 // dismissed and the browser keeps scrollback visible. Run with the server up on
-// 127.0.0.1:8080 and WEBTERM_TOKEN=testtoken. This test ends the server process.
+// 127.0.0.1:8080. This test ends the server process.
 
 const puppeteer = require('puppeteer-core');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
-const TOKEN = process.env.SMOKE_TOKEN || 'testtoken';
 const CHROME =
   process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
 
@@ -23,10 +22,6 @@ const CHROME =
   page.on('console', (m) => {
     if (m.type() === 'error') errors.push('console.error: ' + m.text());
   });
-
-  await page.evaluateOnNewDocument((tok) => {
-    localStorage.setItem('webterm_token', tok);
-  }, TOKEN);
 
   await page.goto(URL, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(

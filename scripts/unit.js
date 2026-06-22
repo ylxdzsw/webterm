@@ -11,8 +11,6 @@ const {
   parseBufferLimit,
 } = require('../src/stream-subscriber');
 
-const SERVER_MODULE = require.resolve('../src/server');
-
 function fakeDeps(shell, opts = {}) {
   return {
     os: {
@@ -238,125 +236,6 @@ async function testEndedSessionStillReadable() {
     session.headless.dispose();
   }
 }
-
-async function withServerModule(env, fn) {
-  const oldEnv = {};
-  for (const [key, value] of Object.entries(env)) {
-    oldEnv[key] = process.env[key];
-    process.env[key] = value;
-  }
-
-  delete require.cache[SERVER_MODULE];
-  const mod = require('../src/server');
-  try {
-    await fn(mod);
-  } finally {
-    mod.session.destroy();
-    try {
-      await new Promise((resolve) => mod.server.close(resolve));
-    } catch (e) {
-      /* ignore */
-    }
-    delete require.cache[SERVER_MODULE];
-    for (const [key, value] of Object.entries(env)) {
-      if (oldEnv[key] === undefined) delete process.env[key];
-      else process.env[key] = oldEnv[key];
-    }
-  }
-}
-
-function findRouteLayer(app, path, method) {
-  return app.router.stack.find(
-    (layer) => layer.route && layer.route.path === path && layer.route.methods[method]
-  );
-}
-
-function createMockResponse() {
-  return {
-    statusCode: 200,
-    headers: {},
-    body: '',
-    finished: false,
-    set(field, value) {
-      if (typeof field === 'string') this.headers[field.toLowerCase()] = value;
-      else {
-        for (const [k, v] of Object.entries(field)) this.headers[k.toLowerCase()] = v;
-      }
-      return this;
-    },
-    setHeader(field, value) {
-      this.headers[String(field).toLowerCase()] = value;
-    },
-    status(code) {
-      this.statusCode = code;
-      return this;
-    },
-    type(value) {
-      this.headers['content-type'] = value;
-      return this;
-    },
-    json(value) {
-      this.type('application/json; charset=utf-8');
-      this.body = JSON.stringify(value);
-      this.finished = true;
-      return this;
-    },
-    send(value) {
-      this.body = Buffer.isBuffer(value) ? value.toString('utf8') : String(value);
-      this.finished = true;
-      return this;
-    },
-  };
-}
-
-async function invokeRoute(layer, req) {
-  const res = createMockResponse();
-  const handlers = layer.route.stack.map((entry) => entry.handle);
-  let i = 0;
-  await new Promise((resolve, reject) => {
-    let settled = false;
-    function finish() {
-      if (settled) return;
-      settled = true;
-      resolve();
-    }
-    function next(err) {
-      if (err) {
-        settled = true;
-        reject(err);
-        return;
-      }
-      const handler = handlers[i++];
-      if (!handler) {
-        finish();
-        return;
-      }
-      try {
-        const out = handler(req, res, next);
-        if (res.finished) {
-          finish();
-          return;
-        }
-        if (out && typeof out.then === 'function') {
-          out
-            .then(() => {
-              if (res.finished) finish();
-            })
-            .catch((e) => {
-              settled = true;
-              reject(e);
-            });
-        }
-      } catch (e) {
-        settled = true;
-        reject(e);
-      }
-    }
-    next();
-  });
-  return res;
-}
-
 
 (async () => {
   testResolveShell();

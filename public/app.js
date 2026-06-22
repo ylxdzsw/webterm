@@ -18,7 +18,7 @@
 // When the program exits, the session (and its server process) is gone, so we
 // show a Reload button that reloads the page — behind socket activation that
 // spawns a fresh shell. Browser disconnects do not end the session: while the
-// program runs the server keeps it alive and reconnects replay a snapshot.
+// program runs the server keeps it alive and reconnects replay the snapshot.
 //
 // The corporate proxy intercepts outbound API calls and may replace the
 // response with an HTML "acknowledge" page or redirect to another origin until
@@ -336,10 +336,6 @@ async function checkClientResponse(resp, { silent = false } = {}) {
   }
   if (!msg || msg.m !== 'WT1') {
     if (!silent) unexpectedResponseDetected();
-    return false;
-  }
-  if (resp.status === 401) {
-    if (!silent) showAuthError();
     return false;
   }
   return { status: resp.status, msg };
@@ -794,10 +790,6 @@ document.addEventListener('keydown', (ev) => {
 });
 
 // ---------------------------------------------------------------- go
-// Prompt for the access token immediately so the user can enter it while
-// the terminal opens.
-getToken();
-
 // Open immediately. xterm measures cell metrics from the system mono stack
 // (synchronous), so English-only sessions download 0 bytes of CJK webfont.
 // Sarasa Term SC is scoped to CJK codepoints via unicode-range and fetched

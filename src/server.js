@@ -1,18 +1,17 @@
 'use strict';
 
 const path = require('path');
-const crypto = require('crypto');
 const express = require('express');
 const { Session, MAX_READ_ROWS } = require('./session');
-const { frame, MAGIC_PREFIX } = require('./protocol');
+const { frame } = require('./protocol');
 const { createStreamSubscriber, parseBufferLimit } = require('./stream-subscriber');
 
-// WEBTERM_DEV_PORT: Undocumented escape hatch for local development.
-// When set to a port number, forces insecure TCP listening without authentication.
-// Production MUST use systemd socket activation + nginx auth (leave this unset).
+// WEBTERM_DEV_PORT: escape hatch for local development.
+// When set to a port number, forces insecure TCP listening on localhost.
+// Production MUST use systemd socket activation behind nginx (leave this unset).
 const DEV_PORT_STR = process.env.WEBTERM_DEV_PORT;
 const DEV_MODE = DEV_PORT_STR != null && DEV_PORT_STR.trim() !== '';
-const HOST = process.env.WEBTERM_HOST || '127.0.0.1';
+const DEV_HOST = '127.0.0.1';
 const PORT = DEV_MODE ? Number.parseInt(DEV_PORT_STR, 10) : 0;
 const KEEPALIVE_MS = Number.parseInt(process.env.WEBTERM_KEEPALIVE_MS || '15000', 10);
 const SUBSCRIBER_BUFFER_BYTES = parseBufferLimit(process.env.WEBTERM_SUBSCRIBER_BUFFER_BYTES);
@@ -33,8 +32,8 @@ const CSP = [
 // at 3, advertised via LISTEN_FDS and addressed to us via LISTEN_PID. If that
 // matches, we listen on the inherited fd instead of binding a port — this is
 // how `webterm@N.socket` (a unix socket) reaches this process. With no socket
-// activation (plain `npm start`), we fall back to HOST:PORT and serve a single
-// shell at `/`.
+// activation (plain `npm start`), we fall back to localhost:PORT and serve a
+// single shell at `/`.
 const SD_LISTEN_FDS_START = 3;
 function socketActivationFd() {
   const n = Number.parseInt(process.env.LISTEN_FDS || '0', 10);
@@ -45,8 +44,8 @@ function socketActivationFd() {
   return SD_LISTEN_FDS_START;
 }
 
-// The one session this process owns. Created up front so it is running the
-// moment the first request arrives (the snapshot is ready immediately).
+// The one session this process owns. Created up front so the first request can
+// stream immediately and `/api/snapshot` is always ready.
 const session = new Session();
 // When the program exits, the session ends and so does this process. Under
 // systemd the unit goes inactive and its cgroup is reaped; the matching socket
@@ -75,11 +74,10 @@ function parseTailRows(value, fallback = 200) {
   return Math.min(parsed, MAX_READ_ROWS);
 }
 
-// --- Static UI (no auth: it contains no secrets; the token is entered by the
-// user and sent on the API calls). xterm assets are served locally so we never
-// depend on a CDN that the proxy would hijack. Behind nginx the per-slot path
-// prefix (`/N/`) is stripped before requests reach us, so everything here is
-// served from the root either way.
+// --- Static UI. xterm assets are served locally so we never depend on a CDN
+// that the proxy would hijack. Behind nginx the per-slot path prefix (`/N/`) is
+// stripped before requests reach us, so everything here is served from the root
+// either way.
 app.use('/', express.static(path.join(__dirname, '..', 'public')));
 app.use(
   '/vendor/xterm.js',
@@ -94,22 +92,19 @@ app.use(
   express.static(path.join(__dirname, '..', 'node_modules', '@xterm', 'addon-fit', 'lib', 'addon-fit.js'))
 );
 
-app.get('/api/health', (req, res) => {
-  jsonFrame(res, { t: 'health', ok: true });
-});
-
 app.get('/api/snapshot', (req, res) => {
   res.type('text/plain; charset=utf-8').send(session.visibleText());
 });
 
+// Structured terminal state for debugging and tests.
 app.get('/api/state', (req, res) => {
   res.json(session.describeState(parseTailRows(req.query.tailRows)));
 });
 
 // --- Output channel: a single long-lived chunked HTTP/1.1 response.
-// First frame is `hello` (carries the MAGIC_PREFIX so the client can detect the
-// nag page), immediately followed by an `o` frame containing the serialized
-// screen snapshot, then live output. Keepalive frames prevent idle timeouts.
+// First frame is `hello`, immediately followed by an `o` frame containing the
+// serialized screen snapshot, then live output. Keepalive frames prevent idle
+// timeouts.
 app.get('/api/stream', (req, res) => {
   res.status(200);
   res.set({
@@ -216,7 +211,7 @@ if (DEV_MODE) {
   console.error('║                                                                          ║');
   console.error('║  WARNING: INSECURE DEV MODE ACTIVE                                       ║');
   console.error('║                                                                          ║');
-  console.error('║  webterm is listening on TCP without authentication.                     ║');
+  console.error('║  webterm is listening on TCP on localhost only.                          ║');
   console.error('║  This exposes a SHELL to anyone who can reach this server.               ║');
   console.error('║                                                                          ║');
   console.error('║  This mode is FOR LOCAL DEVELOPMENT ONLY.                                ║');
@@ -225,18 +220,18 @@ if (DEV_MODE) {
   console.error('║  In production:                                                          ║');
   console.error('║    1. Do NOT set WEBTERM_DEV_PORT                                        ║');
   console.error('║    2. Use systemd socket activation (unix sockets)                       ║');
-  console.error('║    3. Put nginx with authentication in front                             ║');
+  console.error('║    3. Put nginx in front                                                 ║');
   console.error('║                                                                          ║');
   console.error('╚══════════════════════════════════════════════════════════════════════════╝');
   console.error('');
 }
 
-const listenOpts = fd != null ? { fd } : { host: HOST, port: PORT };
+const listenOpts = fd != null ? { fd } : { host: DEV_HOST, port: PORT };
 const server = app.listen(listenOpts, () => {
   if (fd != null) {
     console.log(`webterm listening on inherited socket activation fd ${fd}`);
   } else {
-    console.error(`webterm listening on http://${HOST}:${PORT} [INSECURE DEV MODE]`);
+    console.error(`webterm listening on http://${DEV_HOST}:${PORT} [INSECURE DEV MODE]`);
   }
 });
 
@@ -254,4 +249,4 @@ function shutdown() {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-module.exports = { app, server, session, MAGIC_PREFIX };
+module.exports = { app, server, session };

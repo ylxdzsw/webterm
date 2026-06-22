@@ -10,13 +10,12 @@
 // shell session is irrelevant here (approved + monitored usage), we only need
 // to know "is this our payload or the nag page?".
 
-const MAGIC = 'WT1';
-const MAGIC_PREFIX = '{"m":"' + MAGIC + '"';
+const MAGIC_PREFIX = '{"m":"WT1"';
 
 // Build one newline-delimited frame. `m` (magic) is always first so the
 // serialized string starts with MAGIC_PREFIX.
 function frame(obj) {
-  return JSON.stringify({ m: MAGIC, ...obj }) + '\n';
+  return JSON.stringify({ m: 'WT1', ...obj }) + '\n';
 }
 
-module.exports = { MAGIC, MAGIC_PREFIX, frame };
+module.exports = { MAGIC_PREFIX, frame };

@@ -11,7 +11,6 @@ const TEST_URL =
   URL.replace(/\/$/, '/') +
   '?x=' +
   encodeURIComponent('<img src=x onerror="window.__webtermXss=1">');
-const TOKEN = process.env.SMOKE_TOKEN || 'testtoken';
 const CHROME = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
 
 const NAG_HTML =
@@ -25,14 +24,10 @@ const NAG_HTML =
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
   });
   const page = await browser.newPage();
-  await page.evaluateOnNewDocument((tok) => {
-    localStorage.setItem('webterm_token', tok);
-  }, TOKEN);
-
   await page.setRequestInterception(true);
   page.on('request', (req) => {
-    // The first authed calls on load are /api/resize then /api/stream; hijack
-    // them with the nag page (status 200, text/html) like the proxy would.
+    // The first calls on load are /api/resize then /api/stream; hijack them
+    // with the nag page (status 200, text/html) like the proxy would.
     if (
       req.url().includes('/api/stream') ||
       req.url().includes('/api/resize') ||

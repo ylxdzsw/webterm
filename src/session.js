@@ -38,7 +38,6 @@ class Session {
     this.subscribers = new Set();
     this.ended = false;
     this.exitCode = null;
-    this.createdAt = Date.now();
     this.title = ''; // last OSC 0/2 title the program set, if any
     this.onExit = null; // server-supplied hook fired once the program exits
 
@@ -69,8 +68,6 @@ class Session {
       LANG: process.env.WEBTERM_LANG || process.env.LANG || 'C.UTF-8',
       SHELL: resolved.file,
     };
-    // Don't leak our own config knobs into the child shell.
-    delete env.WEBTERM_TOKEN;
 
     try {
       this.pty = pty.spawn(resolved.file, resolved.args, {

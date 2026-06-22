@@ -56,13 +56,15 @@ fresh shell (under socket activation the next request starts a new process).
 
 ### Transport (WebSocket-free)
 
-Two half-duplex HTTP/1.1 channels per page:
+Two half-duplex HTTP/1.1 channels per page, plus a small read-only snapshot
+endpoint that is handy for debugging and tests:
 
 | Channel | Request | Purpose |
 | --- | --- | --- |
 | Output | `GET api/stream` (long-lived chunked response) | snapshot + live PTY output |
 | Input  | `POST api/input` (coalesced, keep-alive) | keystrokes |
 | Resize | `POST api/resize` | terminal size → PTY `SIGWINCH` |
+| Snapshot | `GET api/snapshot` | current visible terminal text |
 
 URLs are **relative** to the page, so the same client works whether it is served
 at `/` (local) or under a `/<slot>/` prefix (behind nginx).
@@ -84,7 +86,7 @@ WEBTERM_DEV_PORT=8080 npm start
 ```
 
 This enables insecure dev mode with a loud warning. **For local development only.**
-In production, use systemd socket activation + nginx authentication.
+In production, use systemd socket activation behind nginx.
 
 ## Deploy (systemd socket activation + nginx, multi-session)
 
@@ -101,14 +103,12 @@ slot id, routed by nginx. The templates live in `deploy/`.
    sudo systemctl enable --now webterm@{0,1,2,3,4,5,6,7}.socket
    ```
    Edit `User=` and `WorkingDirectory=` in `webterm@.service` first.
-3. Front it with TLS and authentication using `deploy/nginx.conf.sample`. It routes
-   `https://your-domain/<id>/…` to `/run/webterm/<id>.sock` (stripping the
-   prefix) and redirects `/` → `/0/`. The important bits are `proxy_buffering
-   off` and the relative-URL prefix handling.
-4. **Configure nginx authentication** (e.g., HTTP Basic Auth, OAuth2 proxy, or
-   cookie-based auth). Webterm itself has no built-in authentication and trusts
-   all requests reaching the unix socket.
-5. Open `https://your-domain/` (or `/3/` for slot 3) in your browser.
+3. Front it with TLS and any access control you want using
+   `deploy/nginx.conf.sample`. It routes `https://your-domain/<id>/…` to
+   `/run/webterm/<id>.sock` (stripping the prefix) and redirects `/` → `/0/`.
+   The important bits are `proxy_buffering off` and the relative-URL prefix
+   handling.
+4. Open `https://your-domain/` (or `/3/` for slot 3) in your browser.
 
 Each slot is fully independent: its own shell, its own cgroup, started on first
 use and gone when its shell exits. To change the number of slots, edit the
@@ -116,8 +116,9 @@ use and gone when its shell exits. To change the number of slots, edit the
 
 ## Configuration
 
-See `.env.example`. Common knobs: `WEBTERM_HOST`, `WEBTERM_DEV_PORT` (dev only),
-`WEBTERM_CWD`, `WEBTERM_KEEPALIVE_MS`, `WEBTERM_SUBSCRIBER_BUFFER_BYTES`.
+See `.env.example`. Common knobs: `WEBTERM_DEV_PORT` (dev only),
+`WEBTERM_CWD`, `WEBTERM_LANG`, `WEBTERM_KEEPALIVE_MS`,
+`WEBTERM_SUBSCRIBER_BUFFER_BYTES`.
 
 WebTerm always runs the effective user's login shell from passwd as a login
 shell. If the passwd entry has no shell or points to something unusable, the
@@ -148,9 +149,8 @@ paste are passed through by xterm.js.
 
 This exposes a shell, so:
 
-- **Authentication is required.** Webterm has no built-in authentication and trusts
-  all requests that reach the unix socket. In production, **authentication must be
-  handled by nginx** (HTTP Basic Auth, OAuth2 proxy, cookie-based auth, etc.).
+- **Protect it at the proxy layer.** In production put nginx in front and add
+  whatever authentication or network restrictions you want.
 - Unix socket permissions (`SocketUser`/`SocketGroup`/`SocketMode`) restrict local
   access to processes that can connect to `/run/webterm/*.sock`.
 - Serve only over TLS and consider additional restrictions (nginx IP allow-list)

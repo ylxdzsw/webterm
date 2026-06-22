@@ -3,13 +3,12 @@
 // Headless-Chrome smoke test for the frontend. Not part of the app; used to
 // validate that the UI loads without errors, connects to the single shell,
 // sends input, and renders live output. Run with the server up on
-// 127.0.0.1:8080 and WEBTERM_TOKEN=testtoken.
+// 127.0.0.1:8080.
 
 const puppeteer = require('puppeteer-core');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
 const BASE = URL.replace(/\/$/, '');
-const TOKEN = process.env.SMOKE_TOKEN || 'testtoken';
 const CHROME =
   process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
 
@@ -57,8 +56,7 @@ async function waitFor(fn, timeoutMs = 3000) {
     if (u.includes('/api/stream')) streamStatus = r.status();
   });
 
-  await page.evaluateOnNewDocument((tok) => {
-    localStorage.setItem('webterm_token', tok);
+  await page.evaluateOnNewDocument(() => {
     window.__webtermNotifications = [];
     window.__webtermNotificationPermission = 'default';
     window.__webtermNotificationPermissionRequests = 0;
@@ -85,11 +83,11 @@ async function waitFor(fn, timeoutMs = 3000) {
       configurable: true,
       value: FakeNotification,
     });
-  }, TOKEN);
+  });
 
   await page.goto(URL, { waitUntil: 'domcontentloaded' });
   // No lobby: the page attaches directly to the one shell. Wait for the stream
-  // to open and the snapshot to paint.
+  // to open and the initial snapshot to paint.
   await page.waitForFunction(
     () => document.querySelector('.xterm-rows') != null,
     { timeout: 5000 }
@@ -252,33 +250,13 @@ async function waitFor(fn, timeoutMs = 3000) {
     return o && !o.classList.contains('hidden');
   });
 
-  // Independently confirm the command actually ran in the PTY by re-reading the
-  // server snapshot (no session id — there is only one shell).
+  // Independently confirm the command actually ran in the PTY by reading the
+  // current plain-text snapshot.
   let snapshotHasMarker = false;
   try {
-    const res = await fetch(BASE + '/api/stream', {
-      headers: { Authorization: 'Bearer ' + TOKEN },
-    });
-    const reader = res.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-    const start = Date.now();
-    while (Date.now() - start < 1000) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      if (buf.includes('snapshot')) break;
-    }
-    reader.cancel();
-    for (const line of buf.split('\n')) {
-      try {
-        const m = JSON.parse(line);
-        if (m.t === 'o' && m.snapshot) {
-          const d = Buffer.from(m.d, 'base64').toString('utf8');
-          if (d.includes(marker)) snapshotHasMarker = true;
-        }
-      } catch (e) {}
-    }
+    const res = await fetch(BASE + '/api/snapshot');
+    const text = await res.text();
+    snapshotHasMarker = text.includes(marker);
   } catch (e) {
     errors.push('snapshot recheck failed: ' + e.message);
   }

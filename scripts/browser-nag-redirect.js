@@ -6,7 +6,6 @@
 const puppeteer = require('puppeteer-core');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
-const TOKEN = process.env.SMOKE_TOKEN || 'testtoken';
 const CHROME = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
 const REDIRECT_TARGET =
   process.env.NAG_REDIRECT_TARGET || 'https://example.com/acknowledge';
@@ -18,10 +17,6 @@ const REDIRECT_TARGET =
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
   });
   const page = await browser.newPage();
-  await page.evaluateOnNewDocument((tok) => {
-    localStorage.setItem('webterm_token', tok);
-  }, TOKEN);
-
   await page.setRequestInterception(true);
   page.on('request', (req) => {
     if (
