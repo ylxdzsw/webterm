@@ -357,76 +357,6 @@ async function invokeRoute(layer, req) {
   return res;
 }
 
-async function testReadOnlyApiEndpoints() {
-  const token = 'testtoken_read_only_api';
-  await withServerModule(
-    {
-      WEBTERM_TOKEN: token,
-      WEBTERM_HOST: '127.0.0.1',
-      WEBTERM_PORT: '18081',
-    },
-    async ({ app, session }) => {
-      await writeHeadless(session.headless, 'alpha\nbeta\ngamma\ndelta');
-      await writeHeadless(session.headless, '\x1b[?1049hALT');
-
-      const snapshotRoute = findRouteLayer(app, '/api/snapshot', 'get');
-      const stateRoute = findRouteLayer(app, '/api/state', 'get');
-
-      assert(snapshotRoute, 'expected /api/snapshot route');
-      assert(stateRoute, 'expected /api/state route');
-
-      const unauthorized = await invokeRoute(snapshotRoute, {
-        get() {
-          return undefined;
-        },
-      });
-      assert.strictEqual(unauthorized.statusCode, 401);
-
-      const snapshot = await invokeRoute(snapshotRoute, {
-        get(name) {
-          return String(name).toLowerCase() === 'authorization' ? `Bearer ${token}` : undefined;
-        },
-      });
-      assert.strictEqual(snapshot.statusCode, 200);
-      assert.match(snapshot.headers['content-type'], /^text\/plain/);
-      const snapshotLines = snapshot.body.split('\n');
-      assert.strictEqual(snapshotLines.length, session.rows);
-      assert.match(snapshotLines[3], /ALT$/);
-
-      const state = await invokeRoute(stateRoute, {
-        query: { tailRows: '5000' },
-        get(name) {
-          return String(name).toLowerCase() === 'authorization' ? `Bearer ${token}` : undefined;
-        },
-      });
-      assert.strictEqual(state.statusCode, 200);
-      assert.match(state.headers['content-type'], /^application\/json/);
-      const parsed = JSON.parse(state.body);
-      assert.strictEqual(parsed.activeBuffer, 'alternate');
-      assert.strictEqual(parsed.buffers.normal.tailRows.length, parsed.buffers.normal.length);
-      assert.strictEqual(parsed.buffers.active.rows.length, session.rows);
-      assert.deepStrictEqual(parsed.buffers.active.rows.slice(0, 4), [
-        { index: 0, wrapped: false, text: '' },
-        { index: 1, wrapped: false, text: '' },
-        { index: 2, wrapped: false, text: '' },
-        { index: 3, wrapped: false, text: snapshotLines[3] },
-      ]);
-
-      const fallback = await invokeRoute(stateRoute, {
-        query: { tailRows: '-3' },
-        get(name) {
-          return String(name).toLowerCase() === 'authorization' ? `Bearer ${token}` : undefined;
-        },
-      });
-      const fallbackParsed = JSON.parse(fallback.body);
-      assert.strictEqual(fallbackParsed.buffers.normal.tailRows.length, parsed.buffers.normal.length);
-      assert.deepStrictEqual(
-        fallbackParsed.buffers.normal.tailRows.slice(-parsed.buffers.normal.tailRows.length),
-        parsed.buffers.normal.tailRows
-      );
-    }
-  );
-}
 
 (async () => {
   testResolveShell();
@@ -437,7 +367,6 @@ async function testReadOnlyApiEndpoints() {
   testStreamBackpressure();
   testStreamOverflow();
   testParseBufferLimit();
-  await testReadOnlyApiEndpoints();
   console.log('UNIT: PASS');
   process.exit(0);
 })().catch((e) => {

@@ -50,22 +50,6 @@ const els = {
   overlayDismiss: document.getElementById('overlay-dismiss'),
 };
 
-// ---------------------------------------------------------------- token
-function getToken() {
-  let t = localStorage.getItem('webterm_token');
-  if (!t) {
-    t = window.prompt('Access token for this terminal:') || '';
-    if (t) localStorage.setItem('webterm_token', t.trim());
-  }
-  return (t || '').trim();
-}
-function clearToken() {
-  localStorage.removeItem('webterm_token');
-}
-function authHeaders() {
-  return { Authorization: `Bearer ${getToken()}` };
-}
-
 // ---------------------------------------------------------------- terminal
 const term = new Terminal({
   cursorBlink: true,
@@ -380,27 +364,6 @@ function connectionLostDetected() {
   );
 }
 
-function showAuthError() {
-  manualStop = true;
-  connected = false;
-  connecting = false;
-  clearReconnect();
-  abort?.abort();
-  setStatus('unauthorized', 'err');
-  showOverlay('Unauthorized', 'The access token was rejected. Enter it again to continue.', [
-    {
-      label: 'Enter token',
-      onClick: () => {
-        clearToken();
-        getToken();
-        hideOverlay();
-        manualStop = false;
-        connect();
-      },
-    },
-  ]);
-}
-
 // The program exited: the server process is gone. Reloading the page spawns a
 // fresh shell (under socket activation) or reconnects once the unit is back.
 function showReload(code) {
@@ -448,7 +411,6 @@ async function connect() {
   let resp;
   try {
     resp = await fetch('api/stream', {
-      headers: authHeaders(),
       signal: myAbort.signal,
       cache: 'no-store',
       redirect: 'manual',
@@ -461,12 +423,6 @@ async function connect() {
   if (isRedirectHijack(resp)) {
     connecting = false;
     return unexpectedResponseDetected();
-  }
-  if (resp.status === 401) {
-    connecting = false;
-    const txt = await safeText(resp);
-    if (!isOurs(txt)) return unexpectedResponseDetected();
-    return showAuthError();
   }
   if (!hasStreamContentType(resp)) {
     connecting = false;
@@ -771,7 +727,6 @@ async function sendInput(payload) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/octet-stream; charset=utf-8',
-        ...authHeaders(),
       },
       keepalive: false,
       body: new TextEncoder().encode(payload),
@@ -796,7 +751,7 @@ async function sendResize(silent) {
   try {
     const r = await fetch('api/resize', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(dims),
       redirect: 'manual',
     });

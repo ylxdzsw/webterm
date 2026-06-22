@@ -7,8 +7,13 @@ const { Session, MAX_READ_ROWS } = require('./session');
 const { frame, MAGIC_PREFIX } = require('./protocol');
 const { createStreamSubscriber, parseBufferLimit } = require('./stream-subscriber');
 
+// WEBTERM_DEV_PORT: Undocumented escape hatch for local development.
+// When set to a port number, forces insecure TCP listening without authentication.
+// Production MUST use systemd socket activation + nginx auth (leave this unset).
+const DEV_PORT_STR = process.env.WEBTERM_DEV_PORT;
+const DEV_MODE = DEV_PORT_STR != null && DEV_PORT_STR.trim() !== '';
 const HOST = process.env.WEBTERM_HOST || '127.0.0.1';
-const PORT = Number.parseInt(process.env.WEBTERM_PORT || '8080', 10);
+const PORT = DEV_MODE ? Number.parseInt(DEV_PORT_STR, 10) : 0;
 const KEEPALIVE_MS = Number.parseInt(process.env.WEBTERM_KEEPALIVE_MS || '15000', 10);
 const SUBSCRIBER_BUFFER_BYTES = parseBufferLimit(process.env.WEBTERM_SUBSCRIBER_BUFFER_BYTES);
 const CSP = [
@@ -40,52 +45,6 @@ function socketActivationFd() {
   return SD_LISTEN_FDS_START;
 }
 
-// Auth token. The whole point of this app is to expose a shell, so an
-// unauthenticated endpoint would be an open shell to the internet.
-//
-// Rules:
-//   - WEBTERM_TOKEN entirely unset  -> generate a random one-off token (local
-//     convenience; printed on startup).
-//   - WEBTERM_TOKEN set but empty/blank or a known placeholder -> refuse to
-//     start (fail closed). This prevents deploy templates from shipping a
-//     working weak secret.
-const PLACEHOLDER_TOKENS = new Set([
-  'change-me-to-a-long-random-string',
-  'change-me',
-  'changeme',
-  'token',
-  'secret',
-  'password',
-]);
-
-let TOKEN = process.env.WEBTERM_TOKEN;
-if (TOKEN === undefined) {
-  TOKEN = crypto.randomBytes(24).toString('base64url');
-  console.log('\n  No WEBTERM_TOKEN set. Generated a one-off token for this run:');
-  console.log('  WEBTERM_TOKEN=' + TOKEN + '\n');
-} else {
-  TOKEN = TOKEN.trim();
-  if (!TOKEN) {
-    console.error(
-      'FATAL: WEBTERM_TOKEN is set but empty. Provide a strong token, e.g.:\n' +
-        '  WEBTERM_TOKEN=$(openssl rand -base64 32)'
-    );
-    process.exit(1);
-  }
-  if (PLACEHOLDER_TOKENS.has(TOKEN.toLowerCase())) {
-    console.error(
-      'FATAL: WEBTERM_TOKEN is a placeholder value. Set a real random token, e.g.:\n' +
-        '  WEBTERM_TOKEN=$(openssl rand -base64 32)'
-    );
-    process.exit(1);
-  }
-  if (TOKEN.length < 16) {
-    console.warn(
-      'WARNING: WEBTERM_TOKEN is shorter than 16 characters; use a longer random value.'
-    );
-  }
-}
-
 // The one session this process owns. Created up front so it is running the
 // moment the first request arrives (the snapshot is ready immediately).
 const session = new Session();
@@ -104,26 +63,6 @@ app.use((req, res, next) => {
   res.setHeader('Content-Security-Policy', CSP);
   next();
 });
-
-function checkToken(provided) {
-  if (typeof provided !== 'string' || provided.length === 0) return false;
-  const a = Buffer.from(provided);
-  const b = Buffer.from(TOKEN);
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(a, b);
-}
-
-function auth(req, res, next) {
-  // Header-only: never accept the token via query string, which would leak it
-  // into proxy/access logs, browser history, and Referer headers.
-  let tok = null;
-  const h = req.get('authorization');
-  if (h && h.startsWith('Bearer ')) tok = h.slice(7);
-  if (!checkToken(tok)) {
-    return jsonFrame(res, { t: 'error', ok: false, error: 'unauthorized' }, 401);
-  }
-  next();
-}
 
 function jsonFrame(res, body, status = 200) {
   return res.status(status).type('application/json').send(frame(body));
@@ -159,11 +98,11 @@ app.get('/api/health', (req, res) => {
   jsonFrame(res, { t: 'health', ok: true });
 });
 
-app.get('/api/snapshot', auth, (req, res) => {
+app.get('/api/snapshot', (req, res) => {
   res.type('text/plain; charset=utf-8').send(session.visibleText());
 });
 
-app.get('/api/state', auth, (req, res) => {
+app.get('/api/state', (req, res) => {
   res.json(session.describeState(parseTailRows(req.query.tailRows)));
 });
 
@@ -171,7 +110,7 @@ app.get('/api/state', auth, (req, res) => {
 // First frame is `hello` (carries the MAGIC_PREFIX so the client can detect the
 // nag page), immediately followed by an `o` frame containing the serialized
 // screen snapshot, then live output. Keepalive frames prevent idle timeouts.
-app.get('/api/stream', auth, (req, res) => {
+app.get('/api/stream', (req, res) => {
   res.status(200);
   res.set({
     'Content-Type': 'application/x-ndjson; charset=utf-8',
@@ -240,7 +179,7 @@ app.get('/api/stream', auth, (req, res) => {
 
 // --- Input channel: short POSTs carrying raw UTF-8 bytes. The browser reuses the
 // connection (keep-alive) and coalesces rapid keystrokes / mouse motion.
-app.post('/api/input', auth, express.raw({ type: 'application/octet-stream', limit: '1mb' }), (req, res) => {
+app.post('/api/input', express.raw({ type: 'application/octet-stream', limit: '1mb' }), (req, res) => {
   if (session.ended) {
     return jsonFrame(res, { t: 'ack', ok: false, error: 'ended' }, 409);
   }
@@ -254,7 +193,7 @@ app.post('/api/input', auth, express.raw({ type: 'application/octet-stream', lim
   jsonFrame(res, { t: 'ack', ok: true, seq: session.bytes });
 });
 
-app.post('/api/resize', auth, express.json({ limit: '1kb' }), (req, res) => {
+app.post('/api/resize', express.json({ limit: '1kb' }), (req, res) => {
   if (session.ended) {
     return jsonFrame(res, { t: 'ack', ok: false, error: 'ended' }, 409);
   }
@@ -263,14 +202,41 @@ app.post('/api/resize', auth, express.json({ limit: '1kb' }), (req, res) => {
   jsonFrame(res, { t: 'ack', ok: true, cols: session.cols, rows: session.rows });
 });
 
-const fd = socketActivationFd();
+const fd = DEV_MODE ? null : socketActivationFd();
+
+if (!DEV_MODE && fd == null) {
+  console.error('FATAL: No socket activation detected and WEBTERM_DEV_PORT not set.');
+  console.error('In production, use systemd socket activation.');
+  console.error('For local development, set WEBTERM_DEV_PORT to a port number.');
+  process.exit(1);
+}
+
+if (DEV_MODE) {
+  console.error('╔══════════════════════════════════════════════════════════════════════════╗');
+  console.error('║                                                                          ║');
+  console.error('║  WARNING: INSECURE DEV MODE ACTIVE                                       ║');
+  console.error('║                                                                          ║');
+  console.error('║  webterm is listening on TCP without authentication.                     ║');
+  console.error('║  This exposes a SHELL to anyone who can reach this server.               ║');
+  console.error('║                                                                          ║');
+  console.error('║  This mode is FOR LOCAL DEVELOPMENT ONLY.                                ║');
+  console.error('║  DO NOT USE IN PRODUCTION OR ON PUBLICLY ACCESSIBLE NETWORKS.            ║');
+  console.error('║                                                                          ║');
+  console.error('║  In production:                                                          ║');
+  console.error('║    1. Do NOT set WEBTERM_DEV_PORT                                        ║');
+  console.error('║    2. Use systemd socket activation (unix sockets)                       ║');
+  console.error('║    3. Put nginx with authentication in front                             ║');
+  console.error('║                                                                          ║');
+  console.error('╚══════════════════════════════════════════════════════════════════════════╝');
+  console.error('');
+}
+
 const listenOpts = fd != null ? { fd } : { host: HOST, port: PORT };
 const server = app.listen(listenOpts, () => {
   if (fd != null) {
     console.log(`webterm listening on inherited socket activation fd ${fd}`);
   } else {
-    console.log(`webterm listening on http://${HOST}:${PORT}`);
-    console.log('Reverse-proxy this with TLS (nginx) and open it in your browser.');
+    console.error(`webterm listening on http://${HOST}:${PORT} [INSECURE DEV MODE]`);
   }
 });
 

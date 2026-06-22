@@ -79,13 +79,12 @@ to a refresh prompt.
 
 ```bash
 npm install
-WEBTERM_TOKEN=$(openssl rand -base64 24) npm start
-# open the printed URL (http://127.0.0.1:8080), paste the token when prompted
+WEBTERM_DEV_PORT=8080 npm start
+# open http://127.0.0.1:8080
 ```
 
-Without `WEBTERM_TOKEN` the server generates and prints a one-off token. In this
-mode there is no multi-session and no cgroup-based cleanup — it is a single shell
-served at `/`, intended for local use and development.
+This enables insecure dev mode with a loud warning. **For local development only.**
+In production, use systemd socket activation + nginx authentication.
 
 ## Deploy (systemd socket activation + nginx, multi-session)
 
@@ -93,9 +92,7 @@ Multiple terminals come from running several socket-activated instances, one per
 slot id, routed by nginx. The templates live in `deploy/`.
 
 1. Copy the repo to the server (e.g. `/opt/webterm`), run `npm install --omit=dev`.
-2. Set a strong `WEBTERM_TOKEN` (shared by all slots) — see `.env.example` and
-   the `webterm@.service` template.
-3. Install the units and the socket directory:
+2. Install the units and the socket directory:
    ```bash
    sudo cp deploy/webterm@.socket deploy/webterm@.service /etc/systemd/system/
    sudo cp deploy/webterm.tmpfiles.conf /etc/tmpfiles.d/webterm.conf
@@ -103,13 +100,15 @@ slot id, routed by nginx. The templates live in `deploy/`.
    sudo systemctl daemon-reload
    sudo systemctl enable --now webterm@{0,1,2,3,4,5,6,7}.socket
    ```
-   Edit `User=`, `WorkingDirectory=`, and the token in `webterm@.service` first.
-4. Front it with TLS using `deploy/nginx.conf.sample`. It routes
+   Edit `User=` and `WorkingDirectory=` in `webterm@.service` first.
+3. Front it with TLS and authentication using `deploy/nginx.conf.sample`. It routes
    `https://your-domain/<id>/…` to `/run/webterm/<id>.sock` (stripping the
    prefix) and redirects `/` → `/0/`. The important bits are `proxy_buffering
    off` and the relative-URL prefix handling.
-5. Open `https://your-domain/` (or `/3/` for slot 3) in Chrome on the work PC
-   and paste your token.
+4. **Configure nginx authentication** (e.g., HTTP Basic Auth, OAuth2 proxy, or
+   cookie-based auth). Webterm itself has no built-in authentication and trusts
+   all requests reaching the unix socket.
+5. Open `https://your-domain/` (or `/3/` for slot 3) in your browser.
 
 Each slot is fully independent: its own shell, its own cgroup, started on first
 use and gone when its shell exits. To change the number of slots, edit the
@@ -117,9 +116,8 @@ use and gone when its shell exits. To change the number of slots, edit the
 
 ## Configuration
 
-See `.env.example`. Common knobs: `WEBTERM_TOKEN`, `WEBTERM_HOST` /
-`WEBTERM_PORT` (only used without socket activation), `WEBTERM_CWD`,
-`WEBTERM_KEEPALIVE_MS`, `WEBTERM_SUBSCRIBER_BUFFER_BYTES`.
+See `.env.example`. Common knobs: `WEBTERM_HOST`, `WEBTERM_DEV_PORT` (dev only),
+`WEBTERM_CWD`, `WEBTERM_KEEPALIVE_MS`, `WEBTERM_SUBSCRIBER_BUFFER_BYTES`.
 
 WebTerm always runs the effective user's login shell from passwd as a login
 shell. If the passwd entry has no shell or points to something unusable, the
@@ -148,16 +146,12 @@ paste are passed through by xterm.js.
 
 ## Security
 
-This exposes a shell to anyone with the URL and token, so:
+This exposes a shell, so:
 
-- **Set a strong `WEBTERM_TOKEN`.** Generate it with `openssl rand -base64 32`.
-  If `WEBTERM_TOKEN` is set but empty or a known placeholder, the server refuses
-  to start (fail closed). If it is left entirely unset, a random one-off token
-  is generated and printed (local use only). All slots share this one token.
-- The token is sent **only via the `Authorization: Bearer` header** — it is
-  never accepted as a `?token=` query parameter (which would leak into proxy
-  logs, history, and Referer headers).
-- Serve only over TLS and consider additional restrictions (nginx allow-list,
-  basic auth) at the proxy layer.
-- Per-slot unix sockets are gated by filesystem permissions
-  (`SocketUser`/`SocketGroup`/`SocketMode`); only nginx needs connect access.
+- **Authentication is required.** Webterm has no built-in authentication and trusts
+  all requests that reach the unix socket. In production, **authentication must be
+  handled by nginx** (HTTP Basic Auth, OAuth2 proxy, cookie-based auth, etc.).
+- Unix socket permissions (`SocketUser`/`SocketGroup`/`SocketMode`) restrict local
+  access to processes that can connect to `/run/webterm/*.sock`.
+- Serve only over TLS and consider additional restrictions (nginx IP allow-list)
+  at the proxy layer.
