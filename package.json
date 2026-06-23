@@ -13,6 +13,8 @@
     "test:nag": "node scripts/browser-nag.js",
     "test:nag-redirect": "node scripts/browser-nag-redirect.js",
     "test:reconnect-fail": "node scripts/browser-reconnect-fail.js",
+    "test:reconnect-scroll": "node scripts/browser-reconnect-scroll.js",
+    "test:repro": "node scripts/repro-bugs.js",
     "test:exit": "node scripts/browser-exit.js"
   },
   "engines": {
