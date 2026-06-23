@@ -131,7 +131,7 @@ app.get('/api/stream', (req, res) => {
     onClose: cleanup,
   });
 
-  attached = session.attachSubscriber(sub, ({ snapshot, release }) => {
+  attached = session.attachSubscriber(sub, ({ snapshot, markSnapshotSent, release }) => {
     if (closed) return;
 
     sub.send(
@@ -155,6 +155,7 @@ app.get('/api/stream', (req, res) => {
         })
       );
     }
+    markSnapshotSent();
     if (session.ended) {
       sub.send(frame({ t: 'exit', code: session.exitCode }));
       release();

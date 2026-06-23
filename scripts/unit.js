@@ -34,6 +34,7 @@ function createTestSession(cols = 5, rows = 3) {
   session.cols = cols;
   session.rows = rows;
   session.bytes = 0;
+  session._pendingHeadlessWrites = 0;
   session.subscribers = new Set();
   session.ended = false;
   session.exitCode = null;
@@ -106,14 +107,96 @@ async function testSnapshotAttachOrdering() {
 
     const ready = await readyPromise;
     assert.match(ready.snapshot, /before/);
-    assert.doesNotMatch(ready.snapshot, /during/);
+    assert.match(ready.snapshot, /during/);
     assert.strictEqual(liveLines.length, 0);
 
+    ready.markSnapshotSent();
+    ready.release();
+    assert.strictEqual(liveLines.length, 0);
+  } finally {
+    session.headless.dispose();
+  }
+}
+
+async function testLiveFramesTrackHeadlessState() {
+  const session = createTestSession(80, 24);
+
+  try {
+    const liveLines = [];
+    session.subscribers.add({
+      send(line) {
+        liveLines.push(line);
+      },
+    });
+
+    session._onData('visible\n');
+    await new Promise((resolve) => session._whenHeadlessDrained(resolve));
+    assert.match(session.snapshot(), /visible/);
+    assert.strictEqual(liveLines.length, 1);
+    assert.strictEqual(Buffer.from(JSON.parse(liveLines[0]).d, 'base64').toString('utf8'), 'visible\n');
+  } finally {
+    session.headless.dispose();
+  }
+}
+
+async function testAttachBuffersOnlyPostSnapshotOutput() {
+  const session = createTestSession(80, 24);
+
+  try {
+    const liveLines = [];
+    const ready = await new Promise((resolve) => {
+      session.attachSubscriber(
+        {
+          send(line) {
+            liveLines.push(line);
+          },
+          end() {},
+        },
+        resolve
+      );
+    });
+
+    ready.markSnapshotSent();
+    session._onData('after-snapshot\n');
+    await new Promise((resolve) => session._whenHeadlessDrained(resolve));
     ready.release();
     assert.strictEqual(liveLines.length, 1);
-    const msg = JSON.parse(liveLines[0]);
-    assert.strictEqual(msg.t, 'o');
-    assert.strictEqual(Buffer.from(msg.d, 'base64').toString('utf8'), 'during');
+    assert.strictEqual(
+      Buffer.from(JSON.parse(liveLines[0]).d, 'base64').toString('utf8'),
+      'after-snapshot\n'
+    );
+  } finally {
+    session.headless.dispose();
+  }
+}
+async function testAttachDrainIncludesConcurrentOutput() {
+  const session = createTestSession(80, 24);
+
+  try {
+    const liveLines = [];
+    const readyPromise = new Promise((resolve) => {
+      session.attachSubscriber(
+        {
+          send(line) {
+            liveLines.push(line);
+          },
+          end() {},
+        },
+        resolve
+      );
+    });
+    for (let i = 0; i < 20; i++) {
+      session._onData('line' + i + '\n');
+    }
+    const ready = await readyPromise;
+
+    const snapLines = (ready.snapshot.match(/line\d+/g) || []).length;
+    ready.markSnapshotSent();
+    ready.release();
+
+    assert.strictEqual(snapLines, 20);
+    assert.strictEqual(liveLines.length, 0);
+    assert.strictEqual(session.snapshot().match(/line\d+/g).length, 20);
   } finally {
     session.headless.dispose();
   }
@@ -240,6 +323,9 @@ async function testEndedSessionStillReadable() {
 (async () => {
   testResolveShell();
   await testSnapshotAttachOrdering();
+  await testLiveFramesTrackHeadlessState();
+  await testAttachDrainIncludesConcurrentOutput();
+  await testAttachBuffersOnlyPostSnapshotOutput();
   await testVisibleTextAndStructuredState();
   await testAlternateBufferStateIncludesNormalTail();
   await testEndedSessionStillReadable();

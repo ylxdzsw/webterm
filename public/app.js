@@ -271,6 +271,8 @@ let sessionEnded = false; // PTY exited; terminal is read-only until reload
 let reconnectDelay = 1000;
 let reconnectTimer = null;
 let reconnectAttempts = 0;
+let hasReceivedHello = false;
+let scrollAnchor = null; // preserved across reconnect snapshot replay
 
 function isOurs(text) {
   return typeof text === 'string' && text.startsWith(MAGIC_PREFIX);
@@ -496,11 +498,28 @@ function handleFrame(line) {
     case 'hello':
       setDocTitle(msg.title || '');
       // Fresh view of the session: clear and let the snapshot repaint.
+      if (hasReceivedHello) {
+        scrollAnchor = captureScrollAnchor();
+      }
       term.reset();
+      hasReceivedHello = true;
       break;
-    case 'o':
-      term.write(b64ToStr(msg.d));
+    case 'o': {
+      const data = b64ToStr(msg.d);
+      if (msg.snapshot) {
+        term.write(data, () => {
+          if (scrollAnchor) {
+            restoreScrollAnchor(scrollAnchor);
+            scrollAnchor = null;
+          } else {
+            term.scrollToBottom();
+          }
+        });
+      } else {
+        term.write(data);
+      }
       break;
+    }
     case 'title':
       setDocTitle(msg.title || '');
       break;
@@ -539,6 +558,20 @@ function clearReconnect() {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+}
+
+// Remember how far the viewport was from the live bottom so reconnect replay
+// can restore scroll position instead of jumping to the top of scrollback.
+function captureScrollAnchor() {
+  const b = term.buffer.active;
+  return { offsetFromBase: b.baseY - b.viewportY };
+}
+
+function restoreScrollAnchor(anchor) {
+  if (!anchor) return;
+  const b = term.buffer.active;
+  const line = Math.max(0, b.baseY - anchor.offsetFromBase);
+  term.scrollToLine(line);
 }
 
 // ---------------------------------------------------------------- input

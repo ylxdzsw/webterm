@@ -35,6 +35,7 @@ class Session {
     this.cols = opts.cols || DEFAULT_COLS;
     this.rows = opts.rows || DEFAULT_ROWS;
     this.bytes = 0; // total output bytes produced (informational seq for clients)
+    this._pendingHeadlessWrites = 0; // in-flight headless.write callbacks
     this.subscribers = new Set();
     this.ended = false;
     this.exitCode = null;
@@ -87,14 +88,18 @@ class Session {
   }
 
   _onData(data) {
-    this.headless.write(data);
+    if (!data) return;
     this.bytes += Buffer.byteLength(data, 'utf8');
-    const line = frame({
-      t: 'o',
-      seq: this.bytes,
-      d: Buffer.from(data, 'utf8').toString('base64'),
+    this._pendingHeadlessWrites++;
+    this.headless.write(data, () => {
+      this._pendingHeadlessWrites--;
+      const line = frame({
+        t: 'o',
+        seq: this.bytes,
+        d: Buffer.from(data, 'utf8').toString('base64'),
+      });
+      for (const sub of this.subscribers) sub.send(line);
     });
-    for (const sub of this.subscribers) sub.send(line);
   }
 
   _onExit(code) {
@@ -124,16 +129,23 @@ class Session {
   attachSubscriber(sub, onReady) {
     const attached = {
       buffering: true,
+      snapshotSent: false,
       buffer: [],
       send(line) {
-        if (this.buffering) {
-          this.buffer.push(line);
-        } else {
+        if (!this.buffering) {
           sub.send(line);
+          return;
+        }
+        // Output parsed before the snapshot frame is replayed on the client.
+        if (this.snapshotSent) {
+          this.buffer.push(line);
         }
       },
       end() {
         sub.end();
+      },
+      markSnapshotSent() {
+        this.snapshotSent = true;
       },
       release() {
         this.buffering = false;
@@ -143,14 +155,29 @@ class Session {
     };
 
     this.subscribers.add(attached);
-    this.headless.write('', () => {
+    this._whenHeadlessDrained(() => {
       if (!this.subscribers.has(attached)) return;
       onReady({
         snapshot: this.snapshot(),
+        markSnapshotSent: () => attached.markSnapshotSent(),
         release: () => attached.release(),
       });
     });
     return attached;
+  }
+
+  // Wait until every queued headless write has been parsed so snapshots and
+  // live frames cannot diverge (which would drop lines on reconnect).
+  _whenHeadlessDrained(cb) {
+    const tick = () => {
+      if (this._pendingHeadlessWrites > 0) {
+        this.headless.write('', tick);
+        return;
+      }
+      this.headless.write('', cb);
+    };
+    // Defer one tick so output that lands during attach setup is counted.
+    process.nextTick(tick);
   }
 
   // String of escape sequences that recreates the current screen.
