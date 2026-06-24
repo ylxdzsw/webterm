@@ -1,0 +1,32 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --omit=dev
+      - run: npm run test:unit
+      - name: build bundle
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          tar -czf "webterm-${ver}-bundle.tar.gz" \
+            src public node_modules package.json package-lock.json deploy README.md LICENSE
+      - name: create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --generate-release-notes \
+            "webterm-${GITHUB_REF_NAME#v}-bundle.tar.gz"
