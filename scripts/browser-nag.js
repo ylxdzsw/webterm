@@ -26,8 +26,8 @@ const NAG_HTML =
   const page = await browser.newPage();
   await page.setRequestInterception(true);
   page.on('request', (req) => {
-    // The first calls on load are /api/resize then /api/stream; hijack them
-    // with the nag page (status 200, text/html) like the proxy would.
+    // Hijack API calls with the nag page (status 200, text/html) like the proxy
+    // would.
     if (
       req.url().includes('/api/stream') ||
       req.url().includes('/api/resize') ||

@@ -396,19 +396,12 @@ async function connect() {
 
   abort?.abort();
 
-  // Make the backend PTY match our viewport before we snapshot/stream so the
-  // first paint is at the right size.
-  await sendResize(true);
-  if (manualStop) {
-    connecting = false;
-    return;
-  }
-
   abort = new AbortController();
   const myAbort = abort;
+  const streamSize = terminalSize();
   let resp;
   try {
-    resp = await fetch('api/stream', {
+    resp = await fetch(initialStreamUrl(streamSize), {
       signal: myAbort.signal,
       cache: 'no-store',
       redirect: 'manual',
@@ -447,7 +440,9 @@ async function connect() {
     statusHideTimer = null;
     setStatus('');
   }, 1200);
-  sendResize(true);
+  if (term.cols !== streamSize.cols || term.rows !== streamSize.rows) {
+    sendResize(true);
+  }
 
   try {
     for (;;) {
@@ -483,6 +478,18 @@ async function connect() {
 
   connected = false;
   if (!manualStop) scheduleReconnect();
+}
+
+function terminalSize() {
+  return { cols: term.cols, rows: term.rows };
+}
+
+function initialStreamUrl(size) {
+  const params = new URLSearchParams({
+    cols: String(size.cols),
+    rows: String(size.rows),
+  });
+  return 'api/stream?' + params.toString();
 }
 
 function handleFrame(line) {

@@ -106,6 +106,11 @@ app.get('/api/state', (req, res) => {
 // serialized screen snapshot, then live output. Keepalive frames prevent idle
 // timeouts.
 app.get('/api/stream', (req, res) => {
+  // Let the client provide its initial viewport on the stream request itself.
+  // That avoids a separate pre-stream resize round trip while preserving a
+  // correctly-sized first snapshot.
+  session.resize(req.query.cols, req.query.rows);
+
   res.status(200);
   res.set({
     'Content-Type': 'application/x-ndjson; charset=utf-8',
