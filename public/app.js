@@ -39,8 +39,8 @@ const NOTIFICATION_COOLDOWN_MS = 5000;
 const TOUCH_SCROLL_START_PX = 10;
 const TOUCH_SCROLL_SPEED = 6;
 const TOUCH_WHEEL_EVENTS_PER_FRAME = 24;
-const TOUCH_MOMENTUM_MIN_VELOCITY = 0.02;
-const TOUCH_MOMENTUM_STOP_VELOCITY = 0.02;
+const TOUCH_MOMENTUM_MIN_VELOCITY = 0.08;
+const TOUCH_MOMENTUM_STOP_VELOCITY = 0.08;
 const TOUCH_MOMENTUM_DECAY_PER_FRAME = 0.95;
 const TOUCH_MOMENTUM_MAX_MS = 900;
 const DESKTOP_TERMINAL_FONT_SIZE = 14;
@@ -946,17 +946,21 @@ function initMobileTouchScroll() {
     const startedAt = lastAt;
 
     function step(now) {
+      if (Math.abs(velocityY) < TOUCH_MOMENTUM_STOP_VELOCITY) {
+        velocityY = 0;
+        momentumFrame = null;
+        return;
+      }
+
       const elapsed = Math.min(32, Math.max(1, now - lastAt));
       lastAt = now;
       emitTouchScroll(state, velocityY * elapsed);
       velocityY *= Math.pow(TOUCH_MOMENTUM_DECAY_PER_FRAME, elapsed / 16);
 
-      if (
-        now - startedAt < TOUCH_MOMENTUM_MAX_MS &&
-        Math.abs(velocityY) >= TOUCH_MOMENTUM_STOP_VELOCITY
-      ) {
+      if (now - startedAt < TOUCH_MOMENTUM_MAX_MS) {
         momentumFrame = requestAnimationFrame(step);
       } else {
+        velocityY = 0;
         momentumFrame = null;
       }
     }
