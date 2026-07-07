@@ -102,6 +102,11 @@ async function terminalPoint(page) {
   });
   await sleep(1000);
 
+  const phoneFontSize = await page.evaluate(() => term.options.fontSize);
+  if (phoneFontSize !== 12) {
+    errors.push('phone viewport should use 12px terminal font: ' + phoneFontSize);
+  }
+
   const touchCss = await page.evaluate(() => {
     const terminal = document.getElementById('terminal');
     const screen = document.querySelector('.xterm-screen');
@@ -174,8 +179,6 @@ async function terminalPoint(page) {
     inputPayloads.slice(reverseSwipeStart).some((payload) => /\x1b\[<65;\d+;\d+M/.test(payload))
   );
 
-  await browser.close();
-
   const swipePayloads = inputPayloads.slice(swipeStart, reverseSwipeStart);
   const reverseSwipePayloads = inputPayloads.slice(reverseSwipeStart);
   const wheelUpCount = countWheelReports(swipePayloads, 64);
@@ -203,6 +206,31 @@ async function terminalPoint(page) {
   if (wheelDownCount < 22) {
     errors.push('touch swipe produced too few wheel-down reports: ' + wheelDownCount);
   }
+
+  const ipadFontSize = await (async () => {
+    const ipadPage = await browser.newPage();
+    await ipadPage.setViewport({
+      width: 768,
+      height: 1024,
+      deviceScaleFactor: 2,
+      isMobile: true,
+      hasTouch: true,
+    });
+    await ipadPage.goto(URL, { waitUntil: 'domcontentloaded' });
+    await ipadPage.waitForFunction(() => typeof term !== 'undefined' && document.querySelector('.xterm-rows') != null, {
+      timeout: 8000,
+    });
+    const fontSize = await ipadPage.evaluate(() => term.options.fontSize);
+    await ipadPage.close();
+    return fontSize;
+  })();
+  console.log('phoneFontSize    :', phoneFontSize);
+  console.log('ipadFontSize     :', ipadFontSize);
+  if (ipadFontSize !== 14) {
+    errors.push('iPad-width viewport should keep 14px terminal font: ' + ipadFontSize);
+  }
+
+  await browser.close();
 
   const ok = errors.length === 0;
   console.log(ok ? '\nMOBILE-TOUCH-SCROLL: PASS' : '\nMOBILE-TOUCH-SCROLL: FAIL');

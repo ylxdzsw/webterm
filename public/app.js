@@ -43,6 +43,9 @@ const TOUCH_MOMENTUM_MIN_VELOCITY = 0.02;
 const TOUCH_MOMENTUM_STOP_VELOCITY = 0.02;
 const TOUCH_MOMENTUM_DECAY_PER_FRAME = 0.95;
 const TOUCH_MOMENTUM_MAX_MS = 900;
+const DESKTOP_TERMINAL_FONT_SIZE = 14;
+const PHONE_TERMINAL_FONT_SIZE = 12;
+const PHONE_TERMINAL_MAX_WIDTH = 700;
 
 // SGR mouse: ESC [ < Pb ; Px ; Py M|m  (1006/1016). Pb has bit 5 set on MOVE.
 const SGR_MOUSE_RE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])/;
@@ -65,7 +68,7 @@ const term = new Terminal({
   scrollback: 5000,
   fontFamily:
     'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Sarasa Term SC", monospace',
-  fontSize: 14,
+  fontSize: terminalFontSize(),
   theme: { background: '#0b0e14', foreground: '#c9d1d9' },
 });
 const fitAddon = new FitAddon.FitAddon();
@@ -975,6 +978,16 @@ function shouldEnableMobileTouchScroll() {
       'ontouchstart' in window ||
       (window.matchMedia && window.matchMedia('(pointer: coarse)').matches)
   );
+}
+
+function terminalFontSize() {
+  if (
+    window.matchMedia &&
+    window.matchMedia(`(max-width: ${PHONE_TERMINAL_MAX_WIDTH}px)`).matches
+  ) {
+    return PHONE_TERMINAL_FONT_SIZE;
+  }
+  return DESKTOP_TERMINAL_FONT_SIZE;
 }
 
 function touchScrollLinePx() {
