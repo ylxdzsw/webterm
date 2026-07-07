@@ -24,6 +24,7 @@
   --accent: #58a6ff;
   --warn: #f0b429;
   --err: #ff6b6b;
+  --mobile-key-rail-height: 0px;
 }
 
 * {
@@ -41,8 +42,62 @@ body {
 
 #terminal {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: var(--mobile-key-rail-height);
+  left: 0;
   padding: 6px;
+}
+
+.mobile-keys {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 20;
+  display: none;
+  gap: 6px;
+  height: var(--mobile-key-rail-height);
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: rgba(11, 14, 20, 0.96);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.mobile-keys::-webkit-scrollbar {
+  display: none;
+}
+
+.mobile-keys button {
+  flex: 0 0 auto;
+  min-width: 46px;
+  height: 36px;
+  padding: 0 12px;
+  border-color: rgba(201, 209, 217, 0.22);
+  background: #161b22;
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1;
+  touch-action: manipulation;
+}
+
+.mobile-keys button:active {
+  border-color: var(--accent);
+  background: #1f6feb;
+  color: #ffffff;
+}
+
+@media (pointer: coarse), (max-width: 700px) {
+  :root {
+    --mobile-key-rail-height: calc(48px + env(safe-area-inset-bottom));
+  }
+
+  .mobile-keys {
+    display: flex;
+  }
 }
 
 .status {

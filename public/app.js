@@ -42,6 +42,7 @@ const SGR_MOUSE_RE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])/;
 
 const els = {
   terminal: document.getElementById('terminal'),
+  mobileKeys: document.getElementById('mobile-keys'),
   status: document.getElementById('status'),
   overlay: document.getElementById('overlay'),
   overlayTitle: document.getElementById('overlay-title'),
@@ -614,6 +615,31 @@ function clearInputTimers() {
 
 term.onData((data) => {
   queueNormalInput(data);
+});
+
+const VIRTUAL_KEY_INPUT = Object.freeze({
+  tab: '\t',
+  esc: '\x1b',
+  'ctrl-c': '\x03',
+  'ctrl-d': '\x04',
+  left: '\x1b[D',
+  down: '\x1b[B',
+  up: '\x1b[A',
+  right: '\x1b[C',
+  'page-up': '\x1b[5~',
+  'page-down': '\x1b[6~',
+  home: '\x1b[H',
+  end: '\x1b[F',
+});
+
+els.mobileKeys.addEventListener('click', (ev) => {
+  const button = ev.target.closest('button[data-input]');
+  if (!button || !els.mobileKeys.contains(button)) return;
+  const data = VIRTUAL_KEY_INPUT[button.dataset.input];
+  if (!data) return;
+  ev.preventDefault();
+  term.blur();
+  queueImmediateInput(data);
 });
 
 function queueNormalInput(data) {

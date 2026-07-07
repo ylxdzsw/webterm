@@ -33,6 +33,13 @@ async function waitFor(fn, timeoutMs = 3000) {
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
   });
   const page = await browser.newPage();
+  await page.setViewport({
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 2,
+    isMobile: true,
+    hasTouch: true,
+  });
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (m) => {
     if (m.type() === 'error') errors.push('console.error: ' + m.text());
@@ -93,6 +100,76 @@ async function waitFor(fn, timeoutMs = 3000) {
     { timeout: 5000 }
   );
   await sleep(1500);
+
+  const virtualKeys = await page.evaluate(async () => {
+    const rail = document.getElementById('mobile-keys');
+    const terminal = document.getElementById('terminal');
+    const originalFetch = window.fetch.bind(window);
+    const payloads = [];
+    window.fetch = async (resource, init = {}) => {
+      const url = String(resource && resource.url ? resource.url : resource);
+      if (url === 'api/input' || url.endsWith('/api/input')) {
+        const body = init.body || new Uint8Array();
+        payloads.push(new TextDecoder().decode(body));
+        return new Response('{"m":"WT1","t":"ack","ok":true}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return originalFetch(resource, init);
+    };
+
+    try {
+      for (const button of rail.querySelectorAll('button[data-input]')) {
+        button.click();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    } finally {
+      window.fetch = originalFetch;
+    }
+
+    const railBox = rail.getBoundingClientRect();
+    const terminalBox = terminal.getBoundingClientRect();
+    return {
+      labels: Array.from(rail.querySelectorAll('button')).map((button) => button.textContent),
+      payloads,
+      visible: getComputedStyle(rail).display !== 'none',
+      singleLine: rail.scrollHeight <= rail.clientHeight + 1,
+      horizontallyScrollable: rail.scrollWidth > rail.clientWidth,
+      railTop: railBox.top,
+      terminalBottom: terminalBox.bottom,
+      activeElementClass: document.activeElement ? document.activeElement.className : '',
+    };
+  });
+  const expectedVirtualKeyPayloads = [
+    '\t',
+    '\x1b',
+    '\x03',
+    '\x04',
+    '\x1b[D',
+    '\x1b[B',
+    '\x1b[A',
+    '\x1b[C',
+    '\x1b[5~',
+    '\x1b[6~',
+    '\x1b[H',
+    '\x1b[F',
+  ];
+  if (
+    !virtualKeys.visible ||
+    !virtualKeys.singleLine ||
+    !virtualKeys.horizontallyScrollable ||
+    Math.abs(virtualKeys.railTop - virtualKeys.terminalBottom) > 1 ||
+    String(virtualKeys.activeElementClass).includes('xterm-helper-textarea') ||
+    JSON.stringify(virtualKeys.labels) !==
+      JSON.stringify(['Tab', 'Esc', '^C', '^D', '←', '↓', '↑', '→', 'PgUp', 'PgDn', 'Home', 'End']) ||
+    JSON.stringify(virtualKeys.payloads) !== JSON.stringify(expectedVirtualKeyPayloads)
+  ) {
+    errors.push('virtual key rail mismatch: ' + JSON.stringify(virtualKeys));
+  }
+  await page.evaluate(() => {
+    document.querySelector('.xterm-helper-textarea')?.focus();
+  });
 
   const focusedNotification = await page.evaluate(async () => {
     Object.defineProperty(document, 'hidden', {
