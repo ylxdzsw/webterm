@@ -53,6 +53,9 @@ jobs:
       - name: mobile-touch-scroll
         run: bash scripts/ci-browser.sh mobile-touch-scroll
         if: always()
+      - name: mobile-tui-scroll
+        run: bash scripts/ci-browser.sh mobile-tui-scroll
+        if: always()
       - name: exit
         run: bash scripts/ci-browser.sh exit
         if: always()

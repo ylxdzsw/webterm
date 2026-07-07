@@ -37,7 +37,12 @@ const RESIZE_DEBOUNCE_MS = 150;
 const MAX_RECONNECT_ATTEMPTS = 4;
 const NOTIFICATION_COOLDOWN_MS = 5000;
 const TOUCH_SCROLL_START_PX = 10;
-const TOUCH_WHEEL_EVENTS_PER_MOVE = 8;
+const TOUCH_SCROLL_SPEED = 6;
+const TOUCH_WHEEL_EVENTS_PER_FRAME = 24;
+const TOUCH_MOMENTUM_MIN_VELOCITY = 0.02;
+const TOUCH_MOMENTUM_STOP_VELOCITY = 0.02;
+const TOUCH_MOMENTUM_DECAY_PER_FRAME = 0.95;
+const TOUCH_MOMENTUM_MAX_MS = 900;
 
 // SGR mouse: ESC [ < Pb ; Px ; Py M|m  (1006/1016). Pb has bit 5 set on MOVE.
 const SGR_MOUSE_RE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])/;
@@ -837,6 +842,7 @@ function initMobileTouchScroll() {
   if (!term.element) return;
 
   let gesture = null;
+  let momentumFrame = null;
   const opts = { passive: false };
 
   term.element.addEventListener('touchstart', onTouchStart, opts);
@@ -845,6 +851,7 @@ function initMobileTouchScroll() {
   term.element.addEventListener('touchcancel', onTouchCancel, opts);
 
   function onTouchStart(ev) {
+    stopMomentum();
     if (ev.touches.length !== 1) {
       gesture = null;
       return;
@@ -854,8 +861,12 @@ function initMobileTouchScroll() {
       startX: touch.clientX,
       startY: touch.clientY,
       lastY: touch.clientY,
+      startAt: touchEventTime(ev),
+      lastAt: touchEventTime(ev),
+      velocityY: 0,
       remainderY: 0,
       scrolling: false,
+      point: touchWheelPoint(touch),
     };
   }
 
@@ -881,25 +892,80 @@ function initMobileTouchScroll() {
 
     const deltaY = touch.clientY - gesture.lastY;
     gesture.lastY = touch.clientY;
+    gesture.point = touchWheelPoint(touch);
+    const now = touchEventTime(ev);
+    const elapsed = Math.max(1, now - gesture.lastAt);
+    gesture.lastAt = now;
+    gesture.velocityY = gesture.velocityY * 0.35 + (deltaY / elapsed) * 0.65;
     if (!deltaY) return;
 
-    gesture.remainderY += deltaY;
-    const linePx = touchScrollLinePx();
-    let lines = Math.trunc(gesture.remainderY / linePx);
-    if (!lines) return;
-
-    const cappedLines = Math.sign(lines) * Math.min(Math.abs(lines), TOUCH_WHEEL_EVENTS_PER_MOVE);
-    gesture.remainderY -= cappedLines * linePx;
-    dispatchTouchWheel(touch, -Math.sign(cappedLines), Math.abs(cappedLines));
+    emitTouchScroll(gesture, deltaY);
   }
 
   function onTouchEnd(ev) {
     if (gesture && gesture.scrolling && ev.cancelable) ev.preventDefault();
-    if (ev.touches.length === 0) gesture = null;
+    if (ev.touches.length === 0) {
+      if (gesture && gesture.scrolling) startMomentum(gesture);
+      gesture = null;
+    }
   }
 
   function onTouchCancel() {
+    stopMomentum();
     gesture = null;
+  }
+
+  function emitTouchScroll(state, deltaY) {
+    state.remainderY += deltaY * TOUCH_SCROLL_SPEED;
+    const linePx = touchScrollLinePx();
+    const lines = Math.trunc(state.remainderY / linePx);
+    if (!lines) return 0;
+
+    const cappedLines = Math.sign(lines) * Math.min(Math.abs(lines), TOUCH_WHEEL_EVENTS_PER_FRAME);
+    state.remainderY -= cappedLines * linePx;
+    dispatchTouchWheel(state.point, -Math.sign(cappedLines), Math.abs(cappedLines));
+    return Math.abs(cappedLines);
+  }
+
+  function startMomentum(source) {
+    const elapsed = Math.max(1, source.lastAt - source.startAt);
+    const totalVelocityY = (source.lastY - source.startY) / elapsed;
+    const initialVelocity =
+      Math.abs(source.velocityY) > Math.abs(totalVelocityY) ? source.velocityY : totalVelocityY;
+    if (Math.abs(initialVelocity) < TOUCH_MOMENTUM_MIN_VELOCITY) return;
+
+    const state = {
+      point: source.point,
+      remainderY: source.remainderY,
+    };
+    let velocityY = initialVelocity;
+    let lastAt = performance.now();
+    const startedAt = lastAt;
+
+    function step(now) {
+      const elapsed = Math.min(32, Math.max(1, now - lastAt));
+      lastAt = now;
+      emitTouchScroll(state, velocityY * elapsed);
+      velocityY *= Math.pow(TOUCH_MOMENTUM_DECAY_PER_FRAME, elapsed / 16);
+
+      if (
+        now - startedAt < TOUCH_MOMENTUM_MAX_MS &&
+        Math.abs(velocityY) >= TOUCH_MOMENTUM_STOP_VELOCITY
+      ) {
+        momentumFrame = requestAnimationFrame(step);
+      } else {
+        momentumFrame = null;
+      }
+    }
+
+    momentumFrame = requestAnimationFrame(step);
+  }
+
+  function stopMomentum() {
+    if (momentumFrame != null) {
+      cancelAnimationFrame(momentumFrame);
+      momentumFrame = null;
+    }
   }
 }
 
@@ -912,9 +978,17 @@ function shouldEnableMobileTouchScroll() {
 }
 
 function touchScrollLinePx() {
-  const screen = term.element && term.element.querySelector('.xterm-screen');
-  const height = screen ? screen.getBoundingClientRect().height : 0;
-  if (height > 0 && term.rows > 0) return Math.max(8, height / term.rows);
+  const heights = [];
+  const viewport = term.element && term.element.querySelector('.xterm-viewport');
+  const scrollable = term.element && term.element.querySelector('.xterm-scrollable-element');
+  for (const el of [viewport, scrollable, term.element, els.terminal]) {
+    if (!el) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.height > 0) heights.push(rect.height);
+  }
+  if (heights.length > 0 && term.rows > 0) {
+    return Math.max(8, Math.min(...heights) / term.rows);
+  }
 
   const fontSize = Number.parseFloat(term.options.fontSize);
   return Number.isFinite(fontSize) && fontSize > 0 ? Math.max(8, fontSize) : 16;
@@ -922,6 +996,19 @@ function touchScrollLinePx() {
 
 function terminalWheelTarget() {
   return (term.element && term.element.querySelector('.xterm-screen')) || term.element;
+}
+
+function touchWheelPoint(touch) {
+  return {
+    clientX: touch.clientX,
+    clientY: touch.clientY,
+    screenX: touch.screenX,
+    screenY: touch.screenY,
+  };
+}
+
+function touchEventTime(ev) {
+  return Number.isFinite(ev.timeStamp) && ev.timeStamp > 0 ? ev.timeStamp : performance.now();
 }
 
 function dispatchTouchWheel(touch, direction, repeat) {

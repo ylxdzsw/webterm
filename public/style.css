@@ -35,6 +35,8 @@ html,
 body {
   margin: 0;
   height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
   background: var(--bg);
   color: var(--fg);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Sarasa Term SC", monospace;
@@ -47,6 +49,7 @@ body {
   bottom: var(--mobile-key-rail-height);
   left: 0;
   padding: 6px;
+  overscroll-behavior: contain;
 }
 
 .mobile-keys {
@@ -97,6 +100,13 @@ body {
 
   .mobile-keys {
     display: flex;
+  }
+
+  #terminal,
+  #terminal .xterm,
+  #terminal .xterm-viewport,
+  #terminal .xterm-screen {
+    touch-action: none;
   }
 }
 

@@ -5,7 +5,7 @@
 #   scripts/ci-browser.sh <test-name>
 #
 # where <test-name> is one of: smoke nag nag-redirect reconnect-fail
-# reconnect-scroll mobile-touch-scroll exit
+# reconnect-scroll mobile-touch-scroll mobile-tui-scroll exit
 #
 # Starts `node src/server.js` with WEBTERM_DEV_PORT=8080, waits for it to
 # accept connections, runs `npm run test:<test-name>`, and kills the server
@@ -33,7 +33,7 @@ export CHROME_PATH
 NAME="${1:-}"
 if [ -z "$NAME" ]; then
   echo "usage: $0 <test-name>" >&2
-  echo "  smoke nag nag-redirect reconnect-fail reconnect-scroll mobile-touch-scroll exit" >&2
+  echo "  smoke nag nag-redirect reconnect-fail reconnect-scroll mobile-touch-scroll mobile-tui-scroll exit" >&2
   exit 2
 fi
 
