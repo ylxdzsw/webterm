@@ -36,6 +36,8 @@ const MOUSE_MOTION_FLUSH_MS = 33;
 const RESIZE_DEBOUNCE_MS = 150;
 const MAX_RECONNECT_ATTEMPTS = 4;
 const NOTIFICATION_COOLDOWN_MS = 5000;
+const TOUCH_SCROLL_START_PX = 10;
+const TOUCH_WHEEL_EVENTS_PER_MOVE = 8;
 
 // SGR mouse: ESC [ < Pb ; Px ; Py M|m  (1006/1016). Pb has bit 5 set on MOVE.
 const SGR_MOUSE_RE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])/;
@@ -825,6 +827,125 @@ async function sendResize(silent) {
 
 window.addEventListener('resize', scheduleResize);
 
+// ---------------------------------------------------------------- mobile touch scroll
+// xterm already knows how to turn wheel input into local scrollback, SGR wheel
+// reports, or alt-buffer arrow fallback. On touch devices we only bridge a
+// vertical finger drag into that same path.
+function initMobileTouchScroll() {
+  if (!shouldEnableMobileTouchScroll()) return;
+  if (typeof window.WheelEvent !== 'function') return;
+  if (!term.element) return;
+
+  let gesture = null;
+  const opts = { passive: false };
+
+  term.element.addEventListener('touchstart', onTouchStart, opts);
+  term.element.addEventListener('touchmove', onTouchMove, opts);
+  term.element.addEventListener('touchend', onTouchEnd, opts);
+  term.element.addEventListener('touchcancel', onTouchCancel, opts);
+
+  function onTouchStart(ev) {
+    if (ev.touches.length !== 1) {
+      gesture = null;
+      return;
+    }
+    const touch = ev.touches[0];
+    gesture = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      lastY: touch.clientY,
+      remainderY: 0,
+      scrolling: false,
+    };
+  }
+
+  function onTouchMove(ev) {
+    if (!gesture) return;
+    if (ev.touches.length !== 1) {
+      gesture = null;
+      return;
+    }
+
+    const touch = ev.touches[0];
+    const totalX = touch.clientX - gesture.startX;
+    const totalY = touch.clientY - gesture.startY;
+
+    if (!gesture.scrolling) {
+      if (Math.max(Math.abs(totalX), Math.abs(totalY)) < TOUCH_SCROLL_START_PX) return;
+      if (Math.abs(totalY) <= Math.abs(totalX)) return;
+      gesture.scrolling = true;
+    }
+
+    if (ev.cancelable) ev.preventDefault();
+    ev.stopPropagation();
+
+    const deltaY = touch.clientY - gesture.lastY;
+    gesture.lastY = touch.clientY;
+    if (!deltaY) return;
+
+    gesture.remainderY += deltaY;
+    const linePx = touchScrollLinePx();
+    let lines = Math.trunc(gesture.remainderY / linePx);
+    if (!lines) return;
+
+    const cappedLines = Math.sign(lines) * Math.min(Math.abs(lines), TOUCH_WHEEL_EVENTS_PER_MOVE);
+    gesture.remainderY -= cappedLines * linePx;
+    dispatchTouchWheel(touch, -Math.sign(cappedLines), Math.abs(cappedLines));
+  }
+
+  function onTouchEnd(ev) {
+    if (gesture && gesture.scrolling && ev.cancelable) ev.preventDefault();
+    if (ev.touches.length === 0) gesture = null;
+  }
+
+  function onTouchCancel() {
+    gesture = null;
+  }
+}
+
+function shouldEnableMobileTouchScroll() {
+  return Boolean(
+    (navigator.maxTouchPoints && navigator.maxTouchPoints > 0) ||
+      'ontouchstart' in window ||
+      (window.matchMedia && window.matchMedia('(pointer: coarse)').matches)
+  );
+}
+
+function touchScrollLinePx() {
+  const screen = term.element && term.element.querySelector('.xterm-screen');
+  const height = screen ? screen.getBoundingClientRect().height : 0;
+  if (height > 0 && term.rows > 0) return Math.max(8, height / term.rows);
+
+  const fontSize = Number.parseFloat(term.options.fontSize);
+  return Number.isFinite(fontSize) && fontSize > 0 ? Math.max(8, fontSize) : 16;
+}
+
+function terminalWheelTarget() {
+  return (term.element && term.element.querySelector('.xterm-screen')) || term.element;
+}
+
+function dispatchTouchWheel(touch, direction, repeat) {
+  const target = terminalWheelTarget();
+  if (!target) return;
+  const deltaMode = window.WheelEvent.DOM_DELTA_LINE || 1;
+  for (let i = 0; i < repeat; i++) {
+    target.dispatchEvent(
+      new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: touch.clientX,
+        clientY: touch.clientY,
+        screenX: touch.screenX,
+        screenY: touch.screenY,
+        deltaX: 0,
+        deltaY: direction,
+        deltaMode,
+      })
+    );
+  }
+}
+
 // ---------------------------------------------------------------- base64 (UTF-8 safe, output stream only)
 function b64ToStr(b64) {
   const bin = atob(b64);
@@ -862,6 +983,7 @@ document.addEventListener('keydown', (ev) => {
 // lazily only when a CJK glyph is rendered.
 term.open(els.terminal);
 fitAddon.fit();
+initMobileTouchScroll();
 term.focus();
 connect();
 

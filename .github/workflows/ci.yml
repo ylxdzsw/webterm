@@ -50,6 +50,9 @@ jobs:
       - name: reconnect-scroll
         run: bash scripts/ci-browser.sh reconnect-scroll
         if: always()
+      - name: mobile-touch-scroll
+        run: bash scripts/ci-browser.sh mobile-touch-scroll
+        if: always()
       - name: exit
         run: bash scripts/ci-browser.sh exit
         if: always()
