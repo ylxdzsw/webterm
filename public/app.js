@@ -810,6 +810,10 @@ async function sendInput(payload) {
 // ---------------------------------------------------------------- resize
 let resizeTimer = null;
 function scheduleResize() {
+  const nextFontSize = terminalFontSize();
+  if (term.options.fontSize !== nextFontSize) {
+    term.options.fontSize = nextFontSize;
+  }
   fitAddon.fit();
   if (resizeTimer) clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => sendResize(false), RESIZE_DEBOUNCE_MS);

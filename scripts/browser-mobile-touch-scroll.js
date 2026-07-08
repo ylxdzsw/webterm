@@ -107,6 +107,28 @@ async function terminalPoint(page) {
     errors.push('phone viewport should use 12px terminal font: ' + phoneFontSize);
   }
 
+  await page.setViewport({
+    width: 768,
+    height: 1024,
+    deviceScaleFactor: 2,
+    isMobile: true,
+    hasTouch: true,
+  });
+  await page.waitForFunction(() => term.options.fontSize === 14, { timeout: 3000 });
+  const resizedFontSize = await page.evaluate(() => term.options.fontSize);
+  if (resizedFontSize !== 14) {
+    errors.push('resized phone viewport should use 14px terminal font: ' + resizedFontSize);
+  }
+
+  await page.setViewport({
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 2,
+    isMobile: true,
+    hasTouch: true,
+  });
+  await page.waitForFunction(() => term.options.fontSize === 12, { timeout: 3000 });
+
   const touchCss = await page.evaluate(() => {
     const terminal = document.getElementById('terminal');
     const screen = document.querySelector('.xterm-screen');
@@ -225,6 +247,7 @@ async function terminalPoint(page) {
     return fontSize;
   })();
   console.log('phoneFontSize    :', phoneFontSize);
+  console.log('resizedFontSize  :', resizedFontSize);
   console.log('ipadFontSize     :', ipadFontSize);
   if (ipadFontSize !== 14) {
     errors.push('iPad-width viewport should keep 14px terminal font: ' + ipadFontSize);
