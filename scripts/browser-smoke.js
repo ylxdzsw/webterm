@@ -105,7 +105,9 @@ async function waitFor(fn, timeoutMs = 3000) {
     const rail = document.getElementById('mobile-keys');
     const terminal = document.getElementById('terminal');
     const originalFetch = window.fetch.bind(window);
+    const originalScrollTo = window.scrollTo.bind(window);
     const payloads = [];
+    const pageScrolls = [];
     window.fetch = async (resource, init = {}) => {
       const url = String(resource && resource.url ? resource.url : resource);
       if (url === 'api/input' || url.endsWith('/api/input')) {
@@ -118,14 +120,22 @@ async function waitFor(fn, timeoutMs = 3000) {
       }
       return originalFetch(resource, init);
     };
+    window.scrollTo = (...args) => {
+      pageScrolls.push(args[0]);
+    };
 
+    let keyboardActiveElementClass = '';
     try {
+      rail.querySelector('button[data-keyboard]')?.click();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      keyboardActiveElementClass = document.activeElement ? document.activeElement.className : '';
       for (const button of rail.querySelectorAll('button[data-input]')) {
         button.click();
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
     } finally {
       window.fetch = originalFetch;
+      window.scrollTo = originalScrollTo;
     }
 
     const railBox = rail.getBoundingClientRect();
@@ -138,7 +148,10 @@ async function waitFor(fn, timeoutMs = 3000) {
       horizontallyScrollable: rail.scrollWidth > rail.clientWidth,
       railTop: railBox.top,
       terminalBottom: terminalBox.bottom,
+      keyboardActiveElementClass,
       activeElementClass: document.activeElement ? document.activeElement.className : '',
+      pageScrolls,
+      documentScrollHeight: document.documentElement.scrollHeight,
     };
   });
   const expectedVirtualKeyPayloads = [
@@ -160,9 +173,13 @@ async function waitFor(fn, timeoutMs = 3000) {
     !virtualKeys.singleLine ||
     !virtualKeys.horizontallyScrollable ||
     Math.abs(virtualKeys.railTop - virtualKeys.terminalBottom) > 1 ||
+    !String(virtualKeys.keyboardActiveElementClass).includes('xterm-helper-textarea') ||
+    !virtualKeys.pageScrolls.some(
+      (scroll) => scroll && scroll.left === 0 && scroll.top === virtualKeys.documentScrollHeight
+    ) ||
     String(virtualKeys.activeElementClass).includes('xterm-helper-textarea') ||
     JSON.stringify(virtualKeys.labels) !==
-      JSON.stringify(['Tab', 'Esc', '^C', '^D', '←', '↓', '↑', '→', 'PgUp', 'PgDn', 'Home', 'End']) ||
+      JSON.stringify(['⌨️', 'Tab', 'Esc', '^C', '^D', '←', '↓', '↑', '→', 'PgUp', 'PgDn', 'Home', 'End']) ||
     JSON.stringify(virtualKeys.payloads) !== JSON.stringify(expectedVirtualKeyPayloads)
   ) {
     errors.push('virtual key rail mismatch: ' + JSON.stringify(virtualKeys));

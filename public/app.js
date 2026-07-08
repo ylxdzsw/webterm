@@ -642,8 +642,14 @@ const VIRTUAL_KEY_INPUT = Object.freeze({
 });
 
 els.mobileKeys.addEventListener('click', (ev) => {
-  const button = ev.target.closest('button[data-input]');
+  const button = ev.target.closest('button');
   if (!button || !els.mobileKeys.contains(button)) return;
+  if (button.hasAttribute('data-keyboard')) {
+    ev.preventDefault();
+    term.focus();
+    scrollPageToBottomForKeyboard();
+    return;
+  }
   const data = VIRTUAL_KEY_INPUT[button.dataset.input];
   if (!data) return;
   ev.preventDefault();
@@ -666,6 +672,17 @@ function queueImmediateInput(data) {
   if (!data) return;
   inputSegments.push({ data, immediate: true });
   flushInput();
+}
+
+function scrollPageToBottomForKeyboard() {
+  const scroll = () => {
+    window.scrollTo({ left: 0, top: document.documentElement.scrollHeight, behavior: 'auto' });
+  };
+  scroll();
+  requestAnimationFrame(scroll);
+  window.setTimeout(scroll, 80);
+  window.setTimeout(scroll, 300);
+  window.visualViewport?.addEventListener('resize', scroll, { once: true });
 }
 
 function isSgrMotion(seq) {
