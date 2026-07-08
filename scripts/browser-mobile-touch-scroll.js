@@ -53,6 +53,23 @@ async function dispatchTouchSwipe(page, start, end, steps = 8) {
   await client.detach();
 }
 
+async function dispatchTouchTapWithClient(client, point) {
+  await client.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [touchPoint(point.x, point.y)],
+  });
+  await sleep(20);
+  await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+}
+
+async function dispatchTouchDoubleTap(page, point) {
+  const client = await page.target().createCDPSession();
+  await dispatchTouchTapWithClient(client, point);
+  await sleep(80);
+  await dispatchTouchTapWithClient(client, point);
+  await client.detach();
+}
+
 async function terminalPoint(page) {
   return page.evaluate(() => {
     const el = document.querySelector('.xterm-screen') || document.getElementById('terminal');
@@ -171,9 +188,54 @@ async function terminalPoint(page) {
   const tapStart = inputPayloads.length;
   const point = await terminalPoint(page);
   await dispatchTouchSwipe(page, point, { x: point.x, y: point.y }, 1);
-  await sleep(300);
+  await sleep(350);
   if (inputPayloads.length !== tapStart) {
     errors.push('simple touch tap unexpectedly sent input: ' + JSON.stringify(inputPayloads.slice(tapStart)));
+  }
+
+  const doubleTapHiddenKeyboard = await page.evaluate(() => {
+    document.querySelector('.xterm-helper-textarea')?.blur();
+    return {
+      before: document.activeElement ? document.activeElement.className : '',
+    };
+  });
+  const doubleTapStart = inputPayloads.length;
+  await dispatchTouchDoubleTap(page, point);
+  await sleep(150);
+  doubleTapHiddenKeyboard.after = await page.evaluate(() =>
+    document.activeElement ? document.activeElement.className : ''
+  );
+  const doubleTapPayloads = inputPayloads.slice(doubleTapStart);
+  if (JSON.stringify(doubleTapPayloads) !== JSON.stringify(['\t'])) {
+    errors.push('double tap should send one tab: ' + JSON.stringify(doubleTapPayloads));
+  }
+  if (String(doubleTapHiddenKeyboard.after).includes('xterm-helper-textarea')) {
+    errors.push(
+      'double tap should not focus terminal helper textarea: ' + JSON.stringify(doubleTapHiddenKeyboard)
+    );
+  }
+
+  const doubleTapFocusedKeyboard = await page.evaluate(() => {
+    document.querySelector('.xterm-helper-textarea')?.focus();
+    return {
+      before: document.activeElement ? document.activeElement.className : '',
+    };
+  });
+  const focusedDoubleTapStart = inputPayloads.length;
+  await dispatchTouchDoubleTap(page, point);
+  await sleep(150);
+  doubleTapFocusedKeyboard.after = await page.evaluate(() =>
+    document.activeElement ? document.activeElement.className : ''
+  );
+  const focusedDoubleTapPayloads = inputPayloads.slice(focusedDoubleTapStart);
+  if (JSON.stringify(focusedDoubleTapPayloads) !== JSON.stringify(['\t'])) {
+    errors.push('focused double tap should send one tab: ' + JSON.stringify(focusedDoubleTapPayloads));
+  }
+  if (!String(doubleTapFocusedKeyboard.before).includes('xterm-helper-textarea')) {
+    errors.push('test failed to focus helper textarea before double tap: ' + JSON.stringify(doubleTapFocusedKeyboard));
+  }
+  if (!String(doubleTapFocusedKeyboard.after).includes('xterm-helper-textarea')) {
+    errors.push('double tap should preserve focused helper textarea: ' + JSON.stringify(doubleTapFocusedKeyboard));
   }
 
   await page.evaluate(() => {
@@ -207,7 +269,10 @@ async function terminalPoint(page) {
   const wheelDownCount = countWheelReports(reverseSwipePayloads, 65);
   console.log('touchCss         :', JSON.stringify(touchCss));
   console.log('lineMetric       :', JSON.stringify(lineMetric));
-  console.log('tapPayloads       :', JSON.stringify(inputPayloads.slice(tapStart, swipeStart)));
+  console.log('tapPayloads       :', JSON.stringify(inputPayloads.slice(tapStart, doubleTapStart)));
+  console.log('doubleTapPayloads :', JSON.stringify(doubleTapPayloads));
+  console.log('doubleTapFocus    :', JSON.stringify(doubleTapHiddenKeyboard));
+  console.log('focusedDoubleTap  :', JSON.stringify(doubleTapFocusedKeyboard));
   console.log('swipePayloads     :', JSON.stringify(swipePayloads));
   console.log('reverseSwipe      :', JSON.stringify(reverseSwipePayloads));
   console.log('wheelUpCount      :', wheelUpCount);

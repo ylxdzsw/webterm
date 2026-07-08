@@ -43,6 +43,8 @@ const TOUCH_MOMENTUM_MIN_VELOCITY = 0.08;
 const TOUCH_MOMENTUM_STOP_VELOCITY = 0.08;
 const TOUCH_MOMENTUM_DECAY_PER_FRAME = 0.95;
 const TOUCH_MOMENTUM_MAX_MS = 900;
+const TOUCH_DOUBLE_TAP_TIMEOUT_MS = 300;
+const TOUCH_DOUBLE_TAP_SLOP_PX = 100;
 const DESKTOP_TERMINAL_FONT_SIZE = 14;
 const PHONE_TERMINAL_FONT_SIZE = 12;
 const PHONE_TERMINAL_MAX_WIDTH = 700;
@@ -847,7 +849,9 @@ function initMobileTouchScroll() {
 
   let gesture = null;
   let momentumFrame = null;
-  const opts = { passive: false };
+  let lastTap = null;
+  let tapFocusTimer = null;
+  const opts = { passive: false, capture: true };
 
   term.element.addEventListener('touchstart', onTouchStart, opts);
   term.element.addEventListener('touchmove', onTouchMove, opts);
@@ -858,18 +862,28 @@ function initMobileTouchScroll() {
     stopMomentum();
     if (ev.touches.length !== 1) {
       gesture = null;
+      lastTap = null;
+      cancelPendingTapFocus();
       return;
     }
     const touch = ev.touches[0];
+    const now = touchEventTime(ev);
+    const doubleTapCandidate = isDoubleTapCandidate(touch, now);
+    suppressTerminalTouch(ev);
+    if (doubleTapCandidate) {
+      cancelPendingTapFocus();
+    }
     gesture = {
       startX: touch.clientX,
       startY: touch.clientY,
+      lastX: touch.clientX,
       lastY: touch.clientY,
-      startAt: touchEventTime(ev),
-      lastAt: touchEventTime(ev),
+      startAt: now,
+      lastAt: now,
       velocityY: 0,
       remainderY: 0,
       scrolling: false,
+      doubleTapCandidate,
       point: touchWheelPoint(touch),
     };
   }
@@ -878,17 +892,22 @@ function initMobileTouchScroll() {
     if (!gesture) return;
     if (ev.touches.length !== 1) {
       gesture = null;
+      lastTap = null;
+      cancelPendingTapFocus();
       return;
     }
 
     const touch = ev.touches[0];
     const totalX = touch.clientX - gesture.startX;
     const totalY = touch.clientY - gesture.startY;
+    gesture.lastX = touch.clientX;
 
     if (!gesture.scrolling) {
       if (Math.max(Math.abs(totalX), Math.abs(totalY)) < TOUCH_SCROLL_START_PX) return;
       if (Math.abs(totalY) <= Math.abs(totalX)) return;
       gesture.scrolling = true;
+      lastTap = null;
+      cancelPendingTapFocus();
     }
 
     if (ev.cancelable) ev.preventDefault();
@@ -907,9 +926,26 @@ function initMobileTouchScroll() {
   }
 
   function onTouchEnd(ev) {
+    if (gesture && !gesture.scrolling) suppressTerminalTouch(ev);
     if (gesture && gesture.scrolling && ev.cancelable) ev.preventDefault();
     if (ev.touches.length === 0) {
-      if (gesture && gesture.scrolling) startMomentum(gesture);
+      if (gesture && gesture.scrolling) {
+        startMomentum(gesture);
+        lastTap = null;
+      } else if (gesture && isTapGesture(gesture)) {
+        const endedAt = touchEventTime(ev);
+        if (gesture.doubleTapCandidate && isDoubleTapTiming(gesture.startAt)) {
+          cancelPendingTapFocus();
+          lastTap = null;
+          queueImmediateInput(VIRTUAL_KEY_INPUT.tab);
+        } else {
+          lastTap = { at: endedAt, x: gesture.lastX, y: gesture.lastY };
+          scheduleTapFocus();
+        }
+      } else {
+        lastTap = null;
+        cancelPendingTapFocus();
+      }
       gesture = null;
     }
   }
@@ -917,6 +953,52 @@ function initMobileTouchScroll() {
   function onTouchCancel() {
     stopMomentum();
     gesture = null;
+    lastTap = null;
+    cancelPendingTapFocus();
+  }
+
+  function suppressTerminalTouch(ev) {
+    if (els.mobileKeys && els.mobileKeys.contains(ev.target)) return;
+    if (ev.cancelable) ev.preventDefault();
+    ev.stopPropagation();
+  }
+
+  function isTapGesture(state) {
+    return (
+      !state.scrolling &&
+      Math.max(Math.abs(state.lastX - state.startX), Math.abs(state.lastY - state.startY)) <=
+        TOUCH_SCROLL_START_PX
+    );
+  }
+
+  function isDoubleTapCandidate(touch, now) {
+    if (!lastTap) return false;
+    const elapsed = now - lastTap.at;
+    if (elapsed < 0 || elapsed > TOUCH_DOUBLE_TAP_TIMEOUT_MS) return false;
+    const dx = touch.clientX - lastTap.x;
+    const dy = touch.clientY - lastTap.y;
+    return dx * dx + dy * dy <= TOUCH_DOUBLE_TAP_SLOP_PX * TOUCH_DOUBLE_TAP_SLOP_PX;
+  }
+
+  function isDoubleTapTiming(now) {
+    if (!lastTap) return false;
+    const elapsed = now - lastTap.at;
+    return elapsed >= 0 && elapsed <= TOUCH_DOUBLE_TAP_TIMEOUT_MS;
+  }
+
+  function scheduleTapFocus() {
+    cancelPendingTapFocus();
+    tapFocusTimer = window.setTimeout(() => {
+      tapFocusTimer = null;
+      lastTap = null;
+      term.focus();
+    }, TOUCH_DOUBLE_TAP_TIMEOUT_MS);
+  }
+
+  function cancelPendingTapFocus() {
+    if (tapFocusTimer == null) return;
+    window.clearTimeout(tapFocusTimer);
+    tapFocusTimer = null;
   }
 
   function emitTouchScroll(state, deltaY) {
