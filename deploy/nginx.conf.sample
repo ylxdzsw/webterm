@@ -36,6 +36,33 @@ server {
         return 308 /$1/;
     }
 
+    # Static assets can be served directly by nginx so frontend loading does not
+    # compete with the socket-activated Node process. Keep the same auth gate in
+    # your production config if webterm itself is protected at nginx.
+    location ~ ^/[0-7]/(?<asset>(?:app\.js|style\.css|favicon\.svg))$ {
+        alias /opt/webterm/public/$asset;
+        gzip on;
+        add_header Cache-Control "private, max-age=14400" always;
+    }
+
+    location ~ ^/[0-7]/vendor/xterm\.js$ {
+        alias /opt/webterm/node_modules/@xterm/xterm/lib/xterm.js;
+        gzip on;
+        add_header Cache-Control "private, max-age=14400" always;
+    }
+
+    location ~ ^/[0-7]/vendor/xterm\.css$ {
+        alias /opt/webterm/node_modules/@xterm/xterm/css/xterm.css;
+        gzip on;
+        add_header Cache-Control "private, max-age=14400" always;
+    }
+
+    location ~ ^/[0-7]/vendor/addon-fit\.js$ {
+        alias /opt/webterm/node_modules/@xterm/addon-fit/lib/addon-fit.js;
+        gzip on;
+        add_header Cache-Control "private, max-age=14400" always;
+    }
+
     # Per-slot proxy. Capture the slot, strip the /<id>/ prefix, and forward to
     # that slot's unix socket. `/<id>/` (empty rest) becomes `/` -> index.html.
     location ~ ^/(?<slot>[0-7])/ {

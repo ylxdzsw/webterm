@@ -66,15 +66,12 @@ const term = new Terminal({
   cursorBlink: true,
   allowProposedApi: true,
   scrollback: 5000,
-  fontFamily:
-    'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Sarasa Term SC", monospace',
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
   fontSize: terminalFontSize(),
   theme: { background: '#0b0e14', foreground: '#c9d1d9' },
 });
 const fitAddon = new FitAddon.FitAddon();
 term.loadAddon(fitAddon);
-// term.open() runs immediately; Sarasa Term SC is a lazy CJK fallback
-// scoped via unicode-range in style.css. See the bottom of this file.
 
 // ---------------------------------------------------------------- desktop notifications
 let lastNotificationAt = 0;
@@ -1081,22 +1078,8 @@ document.addEventListener('keydown', (ev) => {
 });
 
 // ---------------------------------------------------------------- go
-// Open immediately. xterm measures cell metrics from the system mono stack
-// (synchronous), so English-only sessions download 0 bytes of CJK webfont.
-// Sarasa Term SC is scoped to CJK codepoints via unicode-range and fetched
-// lazily only when a CJK glyph is rendered.
 term.open(els.terminal);
 fitAddon.fit();
 initMobileTouchScroll();
 term.focus();
 connect();
-
-// xterm renders glyphs to a canvas, which does not auto-swap when a webfont
-// finishes loading. Redraw all rows once any webfont loads so CJK glyphs
-// first drawn from an OS fallback get re-rasterized from Sarasa. Only fires
-// when a @font-face actually fetches (i.e. CJK was displayed).
-if (document.fonts) {
-  document.fonts.addEventListener('loadingdone', () => {
-    term.refresh(0, term.rows - 1);
-  });
-}
