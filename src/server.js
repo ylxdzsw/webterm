@@ -35,6 +35,7 @@ const STATIC_ROUTES = new Map([
   ['/app.js', path.join(PUBLIC_DIR, 'app.js')],
   ['/style.css', path.join(PUBLIC_DIR, 'style.css')],
   ['/favicon.svg', path.join(PUBLIC_DIR, 'favicon.svg')],
+  ['/apple-touch-icon.png', path.join(PUBLIC_DIR, 'apple-touch-icon.png')],
   ['/vendor/xterm.js', path.join(__dirname, '..', 'node_modules', '@xterm', 'xterm', 'lib', 'xterm.js')],
   ['/vendor/xterm.css', path.join(__dirname, '..', 'node_modules', '@xterm', 'xterm', 'css', 'xterm.css')],
   [
@@ -48,6 +49,7 @@ const MIME_TYPES = new Map([
   ['.html', 'text/html; charset=utf-8'],
   ['.js', 'text/javascript; charset=utf-8'],
   ['.json', 'application/json; charset=utf-8'],
+  ['.png', 'image/png'],
   ['.svg', 'image/svg+xml'],
   ['.txt', 'text/plain; charset=utf-8'],
 ]);
