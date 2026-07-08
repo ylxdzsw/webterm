@@ -116,8 +116,9 @@ async function runCommand(command, readyPattern, timeoutMs = 10000) {
 }
 
 async function createFixture(file, prefix) {
-  const script = `for i in $(seq -w 1 260); do printf '${prefix}_%s\\n' "$i"; done > ${file}`;
-  await runCommand(script, /^> ?$/m, 10000);
+  const readyMarker = `FIXTURE_READY_${Date.now()}`;
+  const script = `for i in $(seq -w 1 260); do printf '${prefix}_%s\\n' "$i"; done > ${file}; printf '${readyMarker}\\n'`;
+  await runCommand(script, new RegExp(readyMarker), 10000);
 }
 
 async function testLess(page) {
