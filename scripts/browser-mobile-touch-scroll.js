@@ -4,7 +4,7 @@
 // should enter xterm's existing wheel path and produce SGR wheel input when a
 // TUI has enabled mouse reporting.
 //
-// Run with the server up: WEBTERM_DEV_PORT=8080 npm start
+// Run with the test server already listening on http://127.0.0.1:8080/.
 //   node scripts/browser-mobile-touch-scroll.js
 
 const puppeteer = require('puppeteer-core');

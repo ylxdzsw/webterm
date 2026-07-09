@@ -2,12 +2,6 @@
 
 const DEFAULT_BUFFER_BYTES = 4 * 1024 * 1024;
 
-function parseBufferLimit(value) {
-  const n = Number.parseInt(value ?? String(DEFAULT_BUFFER_BYTES), 10);
-  if (!Number.isFinite(n) || n <= 0) return DEFAULT_BUFFER_BYTES;
-  return n;
-}
-
 function createStreamSubscriber(
   res,
   { maxBufferBytes = DEFAULT_BUFFER_BYTES, onClose = () => {} } = {}
@@ -80,5 +74,4 @@ function createStreamSubscriber(
 module.exports = {
   DEFAULT_BUFFER_BYTES,
   createStreamSubscriber,
-  parseBufferLimit,
 };

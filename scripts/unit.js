@@ -5,11 +5,7 @@ const EventEmitter = require('events');
 const { Terminal } = require('@xterm/headless');
 const { SerializeAddon } = require('@xterm/addon-serialize');
 const { Session, resolveShell } = require('../src/session');
-const {
-  DEFAULT_BUFFER_BYTES,
-  createStreamSubscriber,
-  parseBufferLimit,
-} = require('../src/stream-subscriber');
+const { createStreamSubscriber } = require('../src/stream-subscriber');
 
 function fakeDeps(shell, opts = {}) {
   return {
@@ -57,33 +53,21 @@ function writeHeadless(term, data) {
 }
 
 function testResolveShell() {
-  const oldCmd = process.env.WEBTERM_CMD;
-  const oldArgs = process.env.WEBTERM_ARGS;
-  try {
-    process.env.WEBTERM_CMD = '/bin/false';
-    process.env.WEBTERM_ARGS = '--ignored';
+  const resolved = resolveShell(fakeDeps('/bin/bash'));
+  assert.deepStrictEqual(resolved, {
+    file: '/bin/bash',
+    args: ['-l'],
+    command: '/bin/bash -l',
+  });
 
-    const resolved = resolveShell(fakeDeps('/bin/bash'));
-    assert.deepStrictEqual(resolved, {
-      file: '/bin/bash',
-      args: ['-l'],
-      command: '/bin/bash -l',
-    });
-
-    assert.throws(
-      () => resolveShell(fakeDeps('')),
-      /Login shell is missing in passwd/
-    );
-    assert.throws(
-      () => resolveShell(fakeDeps('/bin/nope', { notExecutable: true })),
-      /Login shell "\/bin\/nope" is not executable/
-    );
-  } finally {
-    if (oldCmd === undefined) delete process.env.WEBTERM_CMD;
-    else process.env.WEBTERM_CMD = oldCmd;
-    if (oldArgs === undefined) delete process.env.WEBTERM_ARGS;
-    else process.env.WEBTERM_ARGS = oldArgs;
-  }
+  assert.throws(
+    () => resolveShell(fakeDeps('')),
+    /Login shell is missing in passwd/
+  );
+  assert.throws(
+    () => resolveShell(fakeDeps('/bin/nope', { notExecutable: true })),
+    /Login shell "\/bin\/nope" is not executable/
+  );
 }
 
 async function testSnapshotAttachOrdering() {
@@ -252,12 +236,6 @@ function testStreamOverflow() {
   assert.strictEqual(closed, 1);
 }
 
-function testParseBufferLimit() {
-  assert.strictEqual(parseBufferLimit('123'), 123);
-  assert.strictEqual(parseBufferLimit('0'), DEFAULT_BUFFER_BYTES);
-  assert.strictEqual(parseBufferLimit('not-a-number'), DEFAULT_BUFFER_BYTES);
-}
-
 async function testVisibleTextAndStructuredState() {
   const session = createTestSession(5, 3);
   try {
@@ -331,7 +309,6 @@ async function testEndedSessionStillReadable() {
   await testEndedSessionStillReadable();
   testStreamBackpressure();
   testStreamOverflow();
-  testParseBufferLimit();
   console.log('UNIT: PASS');
   process.exit(0);
 })().catch((e) => {

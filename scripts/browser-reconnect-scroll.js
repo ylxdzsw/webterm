@@ -8,7 +8,7 @@
 //   1. jump the viewport to the top of scrollback
 //   2. drop the newest bottom line permanently
 //
-// Run with the server up: WEBTERM_DEV_PORT=8080 npm start
+// Run with the test server already listening on http://127.0.0.1:8080/.
 //   node scripts/browser-reconnect-scroll.js
 
 const puppeteer = require('puppeteer-core');

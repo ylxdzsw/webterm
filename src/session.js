@@ -66,7 +66,7 @@ class Session {
       // Make full-screen TUIs (opencode, claude code, vim, htop, ...) behave:
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
-      LANG: process.env.WEBTERM_LANG || process.env.LANG || 'C.UTF-8',
+      LANG: 'C.UTF-8',
       SHELL: resolved.file,
     };
 
@@ -75,7 +75,7 @@ class Session {
         name: 'xterm-256color',
         cols: this.cols,
         rows: this.rows,
-        cwd: process.env.WEBTERM_CWD || os.homedir(),
+        cwd: os.homedir(),
         env,
       });
     } catch (e) {

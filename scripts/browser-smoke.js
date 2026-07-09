@@ -319,7 +319,7 @@ async function waitFor(fn, timeoutMs = 3000) {
 
   // Title passthrough: a PTY title set via OSC 0 must be shown raw, with no
   // "Webterm — " prefix.
-  const ptyTitle = 'WEBTERM_PTY_TITLE_' + Date.now();
+  const ptyTitle = 'WT_PTY_TITLE_' + Date.now();
   await page.keyboard.type("printf '\\033]0;" + ptyTitle + "\\007'; sleep 1.5\n");
   await sleep(800);
   const observedTitle = await page.evaluate(() => document.title);

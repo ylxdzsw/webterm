@@ -7,9 +7,9 @@
 # where <test-name> is one of: smoke nag nag-redirect reconnect-fail
 # reconnect-scroll mobile-touch-scroll mobile-tui-scroll exit
 #
-# Starts `node src/server.js` with WEBTERM_DEV_PORT=8080, waits for it to
-# accept connections, runs `npm run test:<test-name>`, and kills the server
-# on exit. Exits with the test's exit code.
+# Starts `node src/server.js` with a local test listener, waits for it to accept
+# connections, runs `npm run test:<test-name>`, and kills the server on exit.
+# Exits with the test's exit code.
 #
 # Requires npm dependencies installed (npm ci) and a Chrome/Chromium binary
 # findable via CHROME_PATH (defaults checked below).

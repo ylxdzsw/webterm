@@ -5,17 +5,15 @@ const http = require('http');
 const path = require('path');
 const { Session, MAX_READ_ROWS } = require('./session');
 const { frame } = require('./protocol');
-const { createStreamSubscriber, parseBufferLimit } = require('./stream-subscriber');
+const { createStreamSubscriber } = require('./stream-subscriber');
 
-// WEBTERM_DEV_PORT: escape hatch for local development.
-// When set to a port number, forces insecure TCP listening on localhost.
-// Production MUST use systemd socket activation behind nginx (leave this unset).
+// Intentionally undocumented. Browser test harnesses use this to bind a local
+// TCP listener without systemd socket activation.
 const DEV_PORT_STR = process.env.WEBTERM_DEV_PORT;
 const DEV_MODE = DEV_PORT_STR != null && DEV_PORT_STR.trim() !== '';
 const DEV_HOST = '127.0.0.1';
 const PORT = DEV_MODE ? Number.parseInt(DEV_PORT_STR, 10) : 0;
-const KEEPALIVE_MS = Number.parseInt(process.env.WEBTERM_KEEPALIVE_MS || '15000', 10);
-const SUBSCRIBER_BUFFER_BYTES = parseBufferLimit(process.env.WEBTERM_SUBSCRIBER_BUFFER_BYTES);
+const KEEPALIVE_MS = 15000;
 const CSP = [
   "default-src 'self'",
   "script-src 'self'",
@@ -58,9 +56,9 @@ const MIME_TYPES = new Map([
 // connection, systemd passes the already-listening socket(s) as fds starting
 // at 3, advertised via LISTEN_FDS and addressed to us via LISTEN_PID. If that
 // matches, we listen on the inherited fd instead of binding a port — this is
-// how `webterm@N.socket` (a unix socket) reaches this process. With no socket
-// activation (plain `npm start`), we fall back to localhost:PORT and serve a
-// single shell at `/`.
+// how `webterm@N.socket` (a unix socket) reaches this process. Without socket
+// activation, production startup fails; browser tests can intentionally bind a
+// localhost TCP listener.
 const SD_LISTEN_FDS_START = 3;
 function socketActivationFd() {
   const n = Number.parseInt(process.env.LISTEN_FDS || '0', 10);
@@ -237,10 +235,7 @@ function handleStream(req, res, url) {
     if (attached) session.removeSubscriber(attached);
   }
 
-  const sub = createStreamSubscriber(res, {
-    maxBufferBytes: SUBSCRIBER_BUFFER_BYTES,
-    onClose: cleanup,
-  });
+  const sub = createStreamSubscriber(res, { onClose: cleanup });
 
   attached = session.attachSubscriber(sub, ({ snapshot, markSnapshotSent, release }) => {
     if (closed) return;
@@ -403,27 +398,23 @@ function handleRequest(req, res) {
 const fd = DEV_MODE ? null : socketActivationFd();
 
 if (!DEV_MODE && fd == null) {
-  console.error('FATAL: No socket activation detected and WEBTERM_DEV_PORT not set.');
-  console.error('In production, use systemd socket activation.');
-  console.error('For local development, set WEBTERM_DEV_PORT to a port number.');
+  console.error('FATAL: webterm requires systemd socket activation.');
+  console.error('Start it from the webterm@.socket unit behind nginx.');
   process.exit(1);
 }
 
 if (DEV_MODE) {
   console.error('╔══════════════════════════════════════════════════════════════════════════╗');
   console.error('║                                                                          ║');
-  console.error('║  WARNING: INSECURE DEV MODE ACTIVE                                       ║');
+  console.error('║  WARNING: INSECURE TEST LISTENER ACTIVE                                  ║');
   console.error('║                                                                          ║');
   console.error('║  webterm is listening on TCP on localhost only.                          ║');
   console.error('║  This exposes a SHELL to anyone who can reach this server.               ║');
   console.error('║                                                                          ║');
-  console.error('║  This mode is FOR LOCAL DEVELOPMENT ONLY.                                ║');
+  console.error('║  This mode is FOR AUTOMATED TESTS ONLY.                                  ║');
   console.error('║  DO NOT USE IN PRODUCTION OR ON PUBLICLY ACCESSIBLE NETWORKS.            ║');
   console.error('║                                                                          ║');
-  console.error('║  In production:                                                          ║');
-  console.error('║    1. Do NOT set WEBTERM_DEV_PORT                                        ║');
-  console.error('║    2. Use systemd socket activation (unix sockets)                       ║');
-  console.error('║    3. Put nginx in front                                                 ║');
+  console.error('║  Production uses systemd socket activation and nginx.                    ║');
   console.error('║                                                                          ║');
   console.error('╚══════════════════════════════════════════════════════════════════════════╝');
   console.error('');
@@ -435,7 +426,7 @@ server.listen(listenOpts, () => {
   if (fd != null) {
     console.log(`webterm listening on inherited socket activation fd ${fd}`);
   } else {
-    console.error(`webterm listening on http://${DEV_HOST}:${PORT} [INSECURE DEV MODE]`);
+    console.error(`webterm listening on http://${DEV_HOST}:${PORT} [INSECURE TEST LISTENER]`);
   }
 });
 

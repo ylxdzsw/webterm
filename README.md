@@ -15,6 +15,7 @@ shell from passwd on startup; the page is a disposable view of it. When that
 shell exits, the server process exits too. Multiple independent terminals are
 provided by running **several instances behind nginx + systemd socket
 activation** (see *Deploy*), not by an in-process session registry.
+It always starts the service user's login shell in that user's home directory.
 
 ## Why this design
 
@@ -77,17 +78,6 @@ you return to the terminal. Plain transport failures are retried automatically
 for a while; after several failed reconnect attempts the client also falls back
 to a refresh prompt.
 
-## Quick start (local, no systemd/nginx)
-
-```bash
-npm install
-WEBTERM_DEV_PORT=8080 npm start
-# open http://127.0.0.1:8080
-```
-
-This enables insecure dev mode with a loud warning. **For local development only.**
-In production, use systemd socket activation behind nginx.
-
 ## Deploy (systemd socket activation + nginx, multi-session)
 
 Multiple terminals come from running several socket-activated instances, one per
@@ -113,12 +103,6 @@ slot id, routed by nginx. The templates live in `deploy/`.
 Each slot is fully independent: its own shell, its own cgroup, started on first
 use and gone when its shell exits. To change the number of slots, edit the
 `[0-7]` ranges in `nginx.conf.sample` and the `enable` instance list.
-
-## Configuration
-
-See `.env.example`. Common knobs: `WEBTERM_DEV_PORT` (dev only),
-`WEBTERM_CWD`, `WEBTERM_LANG`, `WEBTERM_KEEPALIVE_MS`,
-`WEBTERM_SUBSCRIBER_BUFFER_BYTES`.
 
 WebTerm always runs the effective user's login shell from passwd as a login
 shell. If the passwd entry has no shell or points to something unusable, the
