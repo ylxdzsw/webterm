@@ -42,7 +42,7 @@ body {
   display: none;
   gap: 6px;
   height: var(--mobile-key-rail-height);
-  padding: 6px 8px env(safe-area-inset-bottom);
+  padding: 6px 8px env(safe-area-max-inset-bottom);
   overflow-x: auto;
   overflow-y: hidden;
   background: rgba(11, 14, 20, 0.96);
@@ -76,7 +76,7 @@ body {
 
 @media (pointer: coarse), (max-width: 700px) {
   :root {
-    --mobile-key-rail-height: calc(43px + env(safe-area-inset-bottom));
+    --mobile-key-rail-height: calc(43px + env(safe-area-max-inset-bottom));
     --mobile-key-terminal-gap: 3px;
   }
 
