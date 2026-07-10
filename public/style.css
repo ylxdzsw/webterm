@@ -5,6 +5,7 @@
   --warn: #f0b429;
   --err: #ff6b6b;
   --mobile-key-rail-height: 0px;
+  --mobile-key-terminal-gap: 0px;
 }
 
 * {
@@ -26,7 +27,7 @@ body {
   position: fixed;
   top: 0;
   right: 0;
-  bottom: var(--mobile-key-rail-height);
+  bottom: calc(var(--mobile-key-rail-height) + var(--mobile-key-terminal-gap));
   left: 0;
   padding: 6px;
   overscroll-behavior: contain;
@@ -41,7 +42,7 @@ body {
   display: none;
   gap: 6px;
   height: var(--mobile-key-rail-height);
-  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  padding: 6px 8px env(safe-area-inset-bottom);
   overflow-x: auto;
   overflow-y: hidden;
   background: rgba(11, 14, 20, 0.96);
@@ -75,7 +76,8 @@ body {
 
 @media (pointer: coarse), (max-width: 700px) {
   :root {
-    --mobile-key-rail-height: calc(48px + env(safe-area-inset-bottom));
+    --mobile-key-rail-height: calc(43px + env(safe-area-inset-bottom));
+    --mobile-key-terminal-gap: 3px;
   }
 
   .mobile-keys {

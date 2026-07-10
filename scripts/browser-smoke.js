@@ -140,6 +140,7 @@ async function waitFor(fn, timeoutMs = 3000) {
 
     const railBox = rail.getBoundingClientRect();
     const terminalBox = terminal.getBoundingClientRect();
+    const firstButtonBox = rail.querySelector('button').getBoundingClientRect();
     return {
       labels: Array.from(rail.querySelectorAll('button')).map((button) => button.textContent),
       payloads,
@@ -148,6 +149,9 @@ async function waitFor(fn, timeoutMs = 3000) {
       horizontallyScrollable: rail.scrollWidth > rail.clientWidth,
       railTop: railBox.top,
       terminalBottom: terminalBox.bottom,
+      buttonTop: firstButtonBox.top,
+      buttonBottom: firstButtonBox.bottom,
+      viewportHeight: window.innerHeight,
       terminalPosition: getComputedStyle(terminal).position,
       keyboardActiveElementClass,
       activeElementClass: document.activeElement ? document.activeElement.className : '',
@@ -173,7 +177,9 @@ async function waitFor(fn, timeoutMs = 3000) {
     !virtualKeys.visible ||
     !virtualKeys.singleLine ||
     !virtualKeys.horizontallyScrollable ||
-    Math.abs(virtualKeys.railTop - virtualKeys.terminalBottom) > 1 ||
+    Math.abs(virtualKeys.railTop - virtualKeys.terminalBottom - 3) > 1 ||
+    Math.abs(virtualKeys.buttonTop - virtualKeys.railTop - 7) > 1 ||
+    Math.abs(virtualKeys.buttonBottom - virtualKeys.viewportHeight) > 1 ||
     virtualKeys.terminalPosition !== 'fixed' ||
     !String(virtualKeys.keyboardActiveElementClass).includes('xterm-helper-textarea') ||
     !virtualKeys.pageScrolls.some(
