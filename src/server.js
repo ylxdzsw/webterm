@@ -108,6 +108,22 @@ function sendMethodNotAllowed(res) {
   sendText(res, 'Method not allowed', 405);
 }
 
+function sendBodyError(res, errorCode) {
+  const status =
+    errorCode === 'unsupported media type' ? 415 : errorCode === 'payload too large' ? 413 : 400;
+  sendJsonFrame(res, { t: 'ack', ok: false, error: errorCode || 'bad request' }, status);
+}
+
+function requireActivePost(req, res) {
+  if (req.method !== 'POST') {
+    sendMethodNotAllowed(res);
+    return false;
+  }
+  if (!session.ended) return true;
+  sendJsonFrame(res, { t: 'ack', ok: false, error: 'ended' }, 409);
+  return false;
+}
+
 function parseTailRows(value, fallback = 200) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
@@ -278,14 +294,7 @@ function handleStream(req, res, url) {
 }
 
 function handleInput(req, res) {
-  if (req.method !== 'POST') {
-    sendMethodNotAllowed(res);
-    return;
-  }
-  if (session.ended) {
-    sendJsonFrame(res, { t: 'ack', ok: false, error: 'ended' }, 409);
-    return;
-  }
+  if (!requireActivePost(req, res)) return;
 
   readBody(
     req,
@@ -294,18 +303,7 @@ function handleInput(req, res) {
       validateContentType: (contentType) => contentType.includes('application/octet-stream'),
     },
     (err, body, errorCode) => {
-      if (err) {
-        sendJsonFrame(res, { t: 'ack', ok: false, error: 'bad request' }, 400);
-        return;
-      }
-      if (errorCode === 'unsupported media type') {
-        sendJsonFrame(res, { t: 'ack', ok: false, error: errorCode }, 415);
-        return;
-      }
-      if (errorCode === 'payload too large') {
-        sendJsonFrame(res, { t: 'ack', ok: false, error: errorCode }, 413);
-        return;
-      }
+      if (err || errorCode) return sendBodyError(res, errorCode);
       if (Buffer.isBuffer(body) && body.length) {
         session.write(body.toString('utf8'));
       }
@@ -315,14 +313,7 @@ function handleInput(req, res) {
 }
 
 function handleResize(req, res) {
-  if (req.method !== 'POST') {
-    sendMethodNotAllowed(res);
-    return;
-  }
-  if (session.ended) {
-    sendJsonFrame(res, { t: 'ack', ok: false, error: 'ended' }, 409);
-    return;
-  }
+  if (!requireActivePost(req, res)) return;
 
   readBody(
     req,
@@ -334,18 +325,7 @@ function handleResize(req, res) {
       },
     },
     (err, body, errorCode) => {
-      if (err) {
-        sendJsonFrame(res, { t: 'ack', ok: false, error: 'bad request' }, 400);
-        return;
-      }
-      if (errorCode === 'unsupported media type') {
-        sendJsonFrame(res, { t: 'ack', ok: false, error: errorCode }, 415);
-        return;
-      }
-      if (errorCode === 'payload too large') {
-        sendJsonFrame(res, { t: 'ack', ok: false, error: errorCode }, 413);
-        return;
-      }
+      if (err || errorCode) return sendBodyError(res, errorCode);
 
       let parsed = {};
       if (body && body.length) {

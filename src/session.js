@@ -114,12 +114,10 @@ class Session {
       sub.end();
     }
     this.subscribers.clear();
-    if (this.onExit) {
-      try {
-        this.onExit(code);
-      } catch (e) {
-        /* ignore */
-      }
+    try {
+      this.onExit?.(code);
+    } catch {
+      /* ignore */
     }
   }
 

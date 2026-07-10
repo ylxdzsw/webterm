@@ -326,30 +326,22 @@ function stopAndShowRefresh(title, bodyContent, statusText) {
 // another origin. Either way the browser received a reply, but not our
 // protocol, so the only reliable recovery is a full refresh.
 async function checkClientResponse(resp, { silent = false } = {}) {
-  if (isRedirectHijack(resp)) {
+  const invalidResponse = () => {
     if (!silent) unexpectedResponseDetected();
     return false;
-  }
-  if (!hasJsonContentType(resp)) {
-    if (!silent) unexpectedResponseDetected();
-    return false;
-  }
+  };
+
+  if (isRedirectHijack(resp)) return invalidResponse();
+  if (!hasJsonContentType(resp)) return invalidResponse();
   const text = await safeText(resp);
-  if (!isOurs(text)) {
-    if (!silent) unexpectedResponseDetected();
-    return false;
-  }
+  if (!isOurs(text)) return invalidResponse();
   let msg;
   try {
     msg = JSON.parse(text);
-  } catch (e) {
-    if (!silent) unexpectedResponseDetected();
-    return false;
+  } catch {
+    return invalidResponse();
   }
-  if (!msg || msg.m !== 'WT1') {
-    if (!silent) unexpectedResponseDetected();
-    return false;
-  }
+  if (!msg || msg.m !== 'WT1') return invalidResponse();
   return { status: resp.status, msg };
 }
 
@@ -1094,13 +1086,9 @@ function shouldEnableMobileTouchScroll() {
 }
 
 function terminalFontSize() {
-  if (
-    window.matchMedia &&
-    window.matchMedia(`(max-width: ${PHONE_TERMINAL_MAX_WIDTH}px)`).matches
-  ) {
-    return PHONE_TERMINAL_FONT_SIZE;
-  }
-  return DESKTOP_TERMINAL_FONT_SIZE;
+  return window.matchMedia?.(`(max-width: ${PHONE_TERMINAL_MAX_WIDTH}px)`)?.matches
+    ? PHONE_TERMINAL_FONT_SIZE
+    : DESKTOP_TERMINAL_FONT_SIZE;
 }
 
 function touchScrollLinePx() {

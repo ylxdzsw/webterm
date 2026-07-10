@@ -7,58 +7,11 @@
 // useful. It intentionally checks screen movement, not just raw wheel packets.
 
 const puppeteer = require('puppeteer-core');
+const { dispatchTouchSwipe, sleep, terminalPoint, waitFor } = require('./browser-test-utils');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
 const BASE = URL.replace(/\/$/, '');
 const CHROME = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitFor(fn, timeoutMs = 8000) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (await fn()) return true;
-    await sleep(50);
-  }
-  return false;
-}
-
-function touchPoint(x, y) {
-  return { x, y, id: 1, radiusX: 1, radiusY: 1, force: 1 };
-}
-
-async function dispatchTouchSwipe(page, start, end, steps = 10, stepMs = 16) {
-  const client = await page.target().createCDPSession();
-  await client.send('Input.dispatchTouchEvent', {
-    type: 'touchStart',
-    touchPoints: [touchPoint(start.x, start.y)],
-  });
-  for (let i = 1; i <= steps; i++) {
-    const x = start.x + ((end.x - start.x) * i) / steps;
-    const y = start.y + ((end.y - start.y) * i) / steps;
-    await client.send('Input.dispatchTouchEvent', {
-      type: 'touchMove',
-      touchPoints: [touchPoint(x, y)],
-    });
-    await sleep(stepMs);
-  }
-  await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-  await client.detach();
-}
-
-async function terminalPoint(page) {
-  return page.evaluate(() => {
-    const el = document.querySelector('.xterm-screen') || document.getElementById('terminal');
-    if (!el) throw new Error('missing terminal screen');
-    const rect = el.getBoundingClientRect();
-    return {
-      x: rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2,
-    };
-  });
-}
 
 async function visibleText(page) {
   return page.evaluate(() => document.querySelector('.xterm-rows')?.innerText || '');

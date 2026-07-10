@@ -25,19 +25,14 @@ body {
 
 #terminal {
   position: fixed;
-  top: 0;
-  right: 0;
-  bottom: calc(var(--mobile-key-rail-height) + var(--mobile-key-terminal-gap));
-  left: 0;
+  inset: 0 0 calc(var(--mobile-key-rail-height) + var(--mobile-key-terminal-gap));
   padding: 6px;
   overscroll-behavior: contain;
 }
 
 .mobile-keys {
   position: fixed;
-  right: 0;
-  bottom: 0;
-  left: 0;
+  inset: auto 0 0;
   z-index: 20;
   display: none;
   gap: 6px;

@@ -8,49 +8,20 @@
 //   node scripts/browser-mobile-touch-scroll.js
 
 const puppeteer = require('puppeteer-core');
+const {
+  dispatchTouchSwipe,
+  sleep,
+  terminalPoint,
+  touchPoint,
+  waitFor,
+} = require('./browser-test-utils');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
 const CHROME = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitFor(fn, timeoutMs = 5000) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (fn()) return true;
-    await sleep(50);
-  }
-  return false;
-}
-
-function touchPoint(x, y) {
-  return { x, y, id: 1, radiusX: 1, radiusY: 1, force: 1 };
-}
-
 function countWheelReports(payloads, button) {
   const re = new RegExp('\\x1b\\[<' + button + ';\\d+;\\d+M', 'g');
   return payloads.reduce((total, payload) => total + (payload.match(re) || []).length, 0);
-}
-
-async function dispatchTouchSwipe(page, start, end, steps = 8) {
-  const client = await page.target().createCDPSession();
-  await client.send('Input.dispatchTouchEvent', {
-    type: 'touchStart',
-    touchPoints: [touchPoint(start.x, start.y)],
-  });
-  for (let i = 1; i <= steps; i++) {
-    const x = start.x + ((end.x - start.x) * i) / steps;
-    const y = start.y + ((end.y - start.y) * i) / steps;
-    await client.send('Input.dispatchTouchEvent', {
-      type: 'touchMove',
-      touchPoints: [touchPoint(x, y)],
-    });
-    await sleep(16);
-  }
-  await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-  await client.detach();
 }
 
 async function dispatchTouchTapWithClient(client, point) {
@@ -68,18 +39,6 @@ async function dispatchTouchDoubleTap(page, point) {
   await sleep(80);
   await dispatchTouchTapWithClient(client, point);
   await client.detach();
-}
-
-async function terminalPoint(page) {
-  return page.evaluate(() => {
-    const el = document.querySelector('.xterm-screen') || document.getElementById('terminal');
-    if (!el) throw new Error('missing terminal screen');
-    const rect = el.getBoundingClientRect();
-    return {
-      x: rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2,
-    };
-  });
 }
 
 (async () => {
