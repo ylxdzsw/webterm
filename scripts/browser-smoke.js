@@ -148,6 +148,7 @@ async function waitFor(fn, timeoutMs = 3000) {
       horizontallyScrollable: rail.scrollWidth > rail.clientWidth,
       railTop: railBox.top,
       terminalBottom: terminalBox.bottom,
+      terminalPosition: getComputedStyle(terminal).position,
       keyboardActiveElementClass,
       activeElementClass: document.activeElement ? document.activeElement.className : '',
       pageScrolls,
@@ -173,6 +174,7 @@ async function waitFor(fn, timeoutMs = 3000) {
     !virtualKeys.singleLine ||
     !virtualKeys.horizontallyScrollable ||
     Math.abs(virtualKeys.railTop - virtualKeys.terminalBottom) > 1 ||
+    virtualKeys.terminalPosition !== 'fixed' ||
     !String(virtualKeys.keyboardActiveElementClass).includes('xterm-helper-textarea') ||
     !virtualKeys.pageScrolls.some(
       (scroll) => scroll && scroll.left === 0 && scroll.top === virtualKeys.documentScrollHeight

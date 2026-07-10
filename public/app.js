@@ -854,6 +854,15 @@ async function sendResize(silent) {
 }
 
 window.addEventListener('resize', scheduleResize);
+window.visualViewport?.addEventListener('resize', scheduleResize);
+
+function observeTerminalSize() {
+  if (typeof ResizeObserver !== 'function') return;
+  const observer = new ResizeObserver((entries) => {
+    if (entries[0]?.contentRect.height > 0) scheduleResize();
+  });
+  observer.observe(els.terminal);
+}
 
 // ---------------------------------------------------------------- mobile touch scroll
 // xterm already knows how to turn wheel input into local scrollback, SGR wheel
@@ -1183,6 +1192,7 @@ document.addEventListener('keydown', (ev) => {
 // ---------------------------------------------------------------- go
 term.open(els.terminal);
 fitAddon.fit();
+observeTerminalSize();
 initMobileTouchScroll();
 term.focus();
 connect();

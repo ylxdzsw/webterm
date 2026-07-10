@@ -23,7 +23,7 @@ body {
 }
 
 #terminal {
-  position: absolute;
+  position: fixed;
   top: 0;
   right: 0;
   bottom: var(--mobile-key-rail-height);
