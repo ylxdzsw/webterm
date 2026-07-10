@@ -8,7 +8,6 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node src/server.js",
     "test:unit": "node scripts/unit.js",
     "test:smoke": "node scripts/browser-smoke.js",
     "test:nag": "node scripts/browser-nag.js",
@@ -17,7 +16,6 @@
     "test:reconnect-scroll": "node scripts/browser-reconnect-scroll.js",
     "test:mobile-touch-scroll": "node scripts/browser-mobile-touch-scroll.js",
     "test:mobile-tui-scroll": "node scripts/browser-mobile-tui-scroll.js",
-    "test:repro": "node scripts/repro-bugs.js",
     "test:exit": "node scripts/browser-exit.js"
   },
   "engines": {
