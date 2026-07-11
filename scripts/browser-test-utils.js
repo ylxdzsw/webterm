@@ -1,16 +1,26 @@
 'use strict';
 
+const puppeteer = require('puppeteer-core');
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitFor(fn, timeoutMs = 5000) {
+async function waitFor(fn, timeoutMs = 5000, intervalMs = 50) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (await fn()) return true;
-    await sleep(50);
+    await sleep(intervalMs);
   }
   return false;
+}
+
+function launchBrowser() {
+  return puppeteer.launch({
+    executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome-stable',
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
+  });
 }
 
 function touchPoint(x, y) {
@@ -48,4 +58,4 @@ async function terminalPoint(page) {
   });
 }
 
-module.exports = { dispatchTouchSwipe, sleep, terminalPoint, touchPoint, waitFor };
+module.exports = { dispatchTouchSwipe, launchBrowser, sleep, terminalPoint, touchPoint, waitFor };

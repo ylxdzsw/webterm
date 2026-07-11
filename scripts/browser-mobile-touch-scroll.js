@@ -7,9 +7,9 @@
 // Run with the test server already listening on http://127.0.0.1:8080/.
 //   node scripts/browser-mobile-touch-scroll.js
 
-const puppeteer = require('puppeteer-core');
 const {
   dispatchTouchSwipe,
+  launchBrowser,
   sleep,
   terminalPoint,
   touchPoint,
@@ -17,7 +17,6 @@ const {
 } = require('./browser-test-utils');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
-const CHROME = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
 
 function countWheelReports(payloads, button) {
   const re = new RegExp('\\x1b\\[<' + button + ';\\d+;\\d+M', 'g');
@@ -45,11 +44,7 @@ async function dispatchTouchDoubleTap(page, point) {
   const errors = [];
   const inputPayloads = [];
 
-  const browser = await puppeteer.launch({
-    executablePath: CHROME,
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
-  });
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   await page.setViewport({
     width: 390,

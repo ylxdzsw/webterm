@@ -5,33 +5,15 @@
 // sends input, and renders live output. Run with the server up on
 // 127.0.0.1:8080.
 
-const puppeteer = require('puppeteer-core');
+const { launchBrowser, sleep, waitFor: waitUntil } = require('./browser-test-utils');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
 const BASE = URL.replace(/\/$/, '');
-const CHROME =
-  process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitFor(fn, timeoutMs = 3000) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (fn()) return true;
-    await sleep(25);
-  }
-  return false;
-}
+const waitFor = (fn) => waitUntil(fn, 3000, 25);
 
 (async () => {
   const errors = [];
-  const browser = await puppeteer.launch({
-    executablePath: CHROME,
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
-  });
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   await page.setViewport({
     width: 390,

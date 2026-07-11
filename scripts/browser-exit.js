@@ -4,19 +4,13 @@
 // dismissed and the browser keeps scrollback visible. Run with the server up on
 // 127.0.0.1:8080. This test ends the server process.
 
-const puppeteer = require('puppeteer-core');
+const { launchBrowser, sleep } = require('./browser-test-utils');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
-const CHROME =
-  process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
 
 (async () => {
   const errors = [];
-  const browser = await puppeteer.launch({
-    executablePath: CHROME,
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
-  });
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (m) => {
@@ -28,11 +22,11 @@ const CHROME =
     () => document.querySelector('.xterm-rows') != null,
     { timeout: 5000 }
   );
-  await new Promise((r) => setTimeout(r, 1500));
+  await sleep(1500);
 
   const marker = 'EXIT_HISTORY_' + Date.now();
   await page.keyboard.type('echo ' + marker + '\n');
-  await new Promise((r) => setTimeout(r, 1200));
+  await sleep(1200);
 
   await page.keyboard.type('exit 0\n');
 

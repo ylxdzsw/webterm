@@ -3,17 +3,12 @@
 // Simulate repeated stream-connection failures and verify the frontend stops
 // retrying forever and instead asks the user to refresh.
 
-const puppeteer = require('puppeteer-core');
+const { launchBrowser } = require('./browser-test-utils');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
-const CHROME = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
 
 (async () => {
-  const browser = await puppeteer.launch({
-    executablePath: CHROME,
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
-  });
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   await page.setRequestInterception(true);
   page.on('request', (req) => {

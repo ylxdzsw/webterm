@@ -83,7 +83,7 @@ to a refresh prompt.
 Multiple terminals come from running several socket-activated instances, one per
 slot id, routed by nginx. The templates live in `deploy/`.
 
-1. Copy the repo to the server (e.g. `/opt/webterm`), run `npm install --omit=dev`.
+1. With Node.js 22.12+ installed, copy the repo to the server (e.g. `/opt/webterm`) and run `npm install --omit=dev`.
 2. Install the units and the socket directory:
    ```bash
    sudo cp deploy/webterm@.socket deploy/webterm@.service /etc/systemd/system/

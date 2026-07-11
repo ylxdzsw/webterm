@@ -122,7 +122,7 @@ async function triggerTerminalNotification(body) {
       tag: 'webterm-terminal-alert',
     });
     return true;
-  } catch (e) {
+  } catch {
     return false;
   }
 }
@@ -144,9 +144,7 @@ term.onBell(() => {
   triggerTerminalNotification('Terminal needs attention');
 });
 
-if (term.parser && typeof term.parser.registerOscHandler === 'function') {
-  term.parser.registerOscHandler(9, handleOsc9);
-}
+term.parser?.registerOscHandler?.(9, handleOsc9);
 
 // Ctrl+C copies when text is selected, then clears selection; a second Ctrl+C
 // sends SIGINT. Ctrl+V uses the browser paste event (bracketed paste, etc.).
@@ -198,10 +196,8 @@ term.attachCustomKeyEventHandler((ev) => {
 let statusHideTimer = null;
 
 function setStatus(text, kind) {
-  if (statusHideTimer) {
-    clearTimeout(statusHideTimer);
-    statusHideTimer = null;
-  }
+  clearTimeout(statusHideTimer);
+  statusHideTimer = null;
   if (!text) {
     if (sessionEnded) return;
     els.status.classList.add('hidden');
@@ -289,9 +285,7 @@ function isOurs(text) {
 }
 
 function isRedirectHijack(resp) {
-  return Boolean(
-    resp && (resp.type === 'opaqueredirect' || (resp.status >= 300 && resp.status < 400))
-  );
+  return resp?.type === 'opaqueredirect' || (resp?.status >= 300 && resp.status < 400);
 }
 
 function hasContentType(resp, expected) {
@@ -367,10 +361,8 @@ function connectionLostDetected() {
 // The program exited: the server process is gone. Reloading the page spawns a
 // fresh shell (under socket activation) or reconnects once the unit is back.
 function showReload(code) {
-  if (statusHideTimer) {
-    clearTimeout(statusHideTimer);
-    statusHideTimer = null;
-  }
+  clearTimeout(statusHideTimer);
+  statusHideTimer = null;
   els.status.classList.add('hidden');
   showOverlay(
     'Session ended',
@@ -408,7 +400,7 @@ async function connect() {
       cache: 'no-store',
       redirect: 'manual',
     });
-  } catch (e) {
+  } catch {
     connecting = false;
     return scheduleReconnect();
   }
@@ -474,7 +466,7 @@ async function connect() {
         if (line) handleFrame(line);
       }
     }
-  } catch (e) {
+  } catch {
     /* network error / aborted */
   }
 
@@ -498,7 +490,7 @@ function handleFrame(line) {
   let msg;
   try {
     msg = JSON.parse(line);
-  } catch (e) {
+  } catch {
     return; // ignore unparseable noise
   }
   if (!msg || msg.m !== 'WT1') return;
@@ -563,10 +555,8 @@ function scheduleReconnect() {
 }
 
 function clearReconnect() {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
 }
 
 // Remember how far the viewport was from the live bottom so reconnect replay
@@ -600,18 +590,10 @@ let inputBurstTimer = null;
 let inputInFlight = false;
 
 function clearInputTimers() {
-  if (inputMotionTimer != null) {
-    clearTimeout(inputMotionTimer);
-    inputMotionTimer = null;
-  }
-  if (inputIdleTimer != null) {
-    clearTimeout(inputIdleTimer);
-    inputIdleTimer = null;
-  }
-  if (inputBurstTimer != null) {
-    clearTimeout(inputBurstTimer);
-    inputBurstTimer = null;
-  }
+  clearTimeout(inputMotionTimer);
+  clearTimeout(inputIdleTimer);
+  clearTimeout(inputBurstTimer);
+  inputMotionTimer = inputIdleTimer = inputBurstTimer = null;
 }
 
 term.onData((data) => {
@@ -651,7 +633,7 @@ els.mobileKeys.addEventListener('click', (ev) => {
 
 function queueNormalInput(data) {
   if (!data) return;
-  const last = inputSegments[inputSegments.length - 1];
+  const last = inputSegments.at(-1);
   if (last && !last.immediate) {
     last.data = compactMouseMotion(last.data + data);
   } else {
@@ -753,29 +735,20 @@ function scheduleFlush() {
     return;
   }
   if (isMotionOnlyPending()) {
-    if (inputIdleTimer != null || inputBurstTimer != null) {
-      if (inputIdleTimer != null) {
-        clearTimeout(inputIdleTimer);
-        inputIdleTimer = null;
-      }
-      if (inputBurstTimer != null) {
-        clearTimeout(inputBurstTimer);
-        inputBurstTimer = null;
-      }
-    }
+    clearTimeout(inputIdleTimer);
+    clearTimeout(inputBurstTimer);
+    inputIdleTimer = inputBurstTimer = null;
     if (inputMotionTimer != null) return;
     inputMotionTimer = setTimeout(flushInput, MOUSE_MOTION_FLUSH_MS);
     return;
   }
-  if (inputMotionTimer != null) {
-    clearTimeout(inputMotionTimer);
-    inputMotionTimer = null;
-  }
+  clearTimeout(inputMotionTimer);
+  inputMotionTimer = null;
   // Hybrid: 8ms idle (trailing) or 33ms from first key in burst (leading cap).
   if (inputBurstTimer == null) {
     inputBurstTimer = setTimeout(flushInput, INPUT_BURST_MAX_MS);
   }
-  if (inputIdleTimer != null) clearTimeout(inputIdleTimer);
+  clearTimeout(inputIdleTimer);
   inputIdleTimer = setTimeout(flushInput, INPUT_FLUSH_MS);
 }
 
@@ -800,49 +773,37 @@ function flushInput() {
   });
 }
 
-async function sendInput(payload) {
-  if (manualStop) return;
+async function postApi(path, body, contentType, silent = false) {
   try {
-    const r = await fetch('api/input', {
+    const response = await fetch(path, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/octet-stream; charset=utf-8',
-      },
-      keepalive: false,
-      body: new TextEncoder().encode(payload),
+      headers: { 'Content-Type': contentType },
+      body,
       redirect: 'manual',
     });
-    await checkClientResponse(r);
-  } catch (e) {
-    /* network blip; the output stream's reconnect logic recovers */
+    await checkClientResponse(response, { silent });
+  } catch {
+    /* the output stream's reconnect logic recovers network failures */
   }
+}
+
+function sendInput(payload) {
+  if (manualStop) return Promise.resolve();
+  return postApi('api/input', new TextEncoder().encode(payload), 'application/octet-stream; charset=utf-8');
 }
 
 // ---------------------------------------------------------------- resize
 let resizeTimer = null;
 function scheduleResize() {
   const nextFontSize = terminalFontSize();
-  if (term.options.fontSize !== nextFontSize) {
-    term.options.fontSize = nextFontSize;
-  }
+  if (term.options.fontSize !== nextFontSize) term.options.fontSize = nextFontSize;
   fitAddon.fit();
-  if (resizeTimer) clearTimeout(resizeTimer);
+  clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => sendResize(false), RESIZE_DEBOUNCE_MS);
 }
 
-async function sendResize(silent) {
-  const dims = { cols: term.cols, rows: term.rows };
-  try {
-    const r = await fetch('api/resize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(dims),
-      redirect: 'manual',
-    });
-    await checkClientResponse(r, { silent });
-  } catch (e) {
-    /* ignore; stream reconnect handles recovery */
-  }
+function sendResize(silent) {
+  return postApi('api/resize', JSON.stringify(terminalSize()), 'application/json', silent);
 }
 
 window.addEventListener('resize', scheduleResize);
@@ -1079,9 +1040,9 @@ function initMobileTouchScroll() {
 
 function shouldEnableMobileTouchScroll() {
   return Boolean(
-    (navigator.maxTouchPoints && navigator.maxTouchPoints > 0) ||
+    navigator.maxTouchPoints > 0 ||
       'ontouchstart' in window ||
-      (window.matchMedia && window.matchMedia('(pointer: coarse)').matches)
+      window.matchMedia?.('(pointer: coarse)')?.matches
   );
 }
 
@@ -1093,8 +1054,8 @@ function terminalFontSize() {
 
 function touchScrollLinePx() {
   const heights = [];
-  const viewport = term.element && term.element.querySelector('.xterm-viewport');
-  const scrollable = term.element && term.element.querySelector('.xterm-scrollable-element');
+  const viewport = term.element?.querySelector('.xterm-viewport');
+  const scrollable = term.element?.querySelector('.xterm-scrollable-element');
   for (const el of [viewport, scrollable, term.element, els.terminal]) {
     if (!el) continue;
     const rect = el.getBoundingClientRect();
@@ -1109,7 +1070,7 @@ function touchScrollLinePx() {
 }
 
 function terminalWheelTarget() {
-  return (term.element && term.element.querySelector('.xterm-screen')) || term.element;
+  return term.element?.querySelector('.xterm-screen') || term.element;
 }
 
 function touchWheelPoint(touch) {
@@ -1158,7 +1119,7 @@ function b64ToStr(b64) {
 async function safeText(resp) {
   try {
     return await resp.text();
-  } catch (e) {
+  } catch {
     return '';
   }
 }

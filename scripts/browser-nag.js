@@ -4,25 +4,19 @@
 // page, and verify the frontend detects it and requires a refresh instead of
 // dumping HTML into the terminal.
 
-const puppeteer = require('puppeteer-core');
+const { launchBrowser, sleep } = require('./browser-test-utils');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
 const TEST_URL =
   URL.replace(/\/$/, '/') +
   '?x=' +
   encodeURIComponent('<img src=x onerror="window.__webtermXss=1">');
-const CHROME = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
-
 const NAG_HTML =
   '<!DOCTYPE html><html><body><h1>Corporate Reminder</h1>' +
   '<p>Please click Acknowledged to continue.</p></body></html>';
 
 (async () => {
-  const browser = await puppeteer.launch({
-    executablePath: CHROME,
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
-  });
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   await page.setRequestInterception(true);
   page.on('request', (req) => {
@@ -44,7 +38,7 @@ const NAG_HTML =
   });
 
   await page.goto(TEST_URL, { waitUntil: 'domcontentloaded' });
-  await new Promise((r) => setTimeout(r, 1500));
+  await sleep(1500);
 
   const result = await page.evaluate(() => {
     const o = document.getElementById('overlay');

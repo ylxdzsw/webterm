@@ -11,25 +11,11 @@
 // Run with the test server already listening on http://127.0.0.1:8080/.
 //   node scripts/browser-reconnect-scroll.js
 
-const puppeteer = require('puppeteer-core');
 const path = require('path');
+const { launchBrowser, sleep, waitFor } = require('./browser-test-utils');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
-const CHROME = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
 const BURST_SCRIPT = path.join(__dirname, 'repro', 'codex-burst.sh');
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitFor(fn, timeoutMs = 8000) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (await fn()) return true;
-    await sleep(50);
-  }
-  return false;
-}
 
 async function readTerminalState(page) {
   return page.evaluate(() => {
@@ -56,11 +42,7 @@ async function readTerminalState(page) {
   const marker = 'BOTTOM_MARKER_' + Date.now();
   const prefix = 'REPRO_' + Date.now();
 
-  const browser = await puppeteer.launch({
-    executablePath: CHROME,
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
-  });
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 

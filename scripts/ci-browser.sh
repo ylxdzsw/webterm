@@ -8,7 +8,7 @@
 # reconnect-scroll mobile-touch-scroll mobile-tui-scroll exit
 #
 # Starts `node src/server.js` with a local test listener, waits for it to accept
-# connections, runs `npm run test:<test-name>`, and kills the server on exit.
+# connections, runs `node --run test:<test-name>`, and kills the server on exit.
 # Exits with the test's exit code.
 #
 # Requires npm dependencies installed (npm ci) and a Chrome/Chromium binary
@@ -71,7 +71,7 @@ if [ "$ready" -ne 1 ]; then
 fi
 
 echo "ci-browser: running test:${NAME}"
-npm run "test:${NAME}"
+node --run "test:${NAME}"
 RC=$?
 echo "ci-browser: test:${NAME} exited ${RC}"
 exit "$RC"

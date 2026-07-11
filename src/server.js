@@ -124,6 +124,12 @@ function requireActivePost(req, res) {
   return false;
 }
 
+function requireRead(req, res) {
+  if (req.method === 'GET' || req.method === 'HEAD') return true;
+  sendMethodNotAllowed(res);
+  return false;
+}
+
 function parseTailRows(value, fallback = 200) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
@@ -139,10 +145,7 @@ function requestUrl(req) {
 function serveStatic(req, res, pathname) {
   const file = STATIC_ROUTES.get(pathname);
   if (!file) return false;
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    sendMethodNotAllowed(res);
-    return true;
-  }
+  if (!requireRead(req, res)) return true;
 
   fs.readFile(file, (err, body) => {
     if (err) {
@@ -197,18 +200,12 @@ function readBody(req, { limit, validateContentType }, callback) {
 }
 
 function handleSnapshot(req, res) {
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    sendMethodNotAllowed(res);
-    return;
-  }
+  if (!requireRead(req, res)) return;
   sendText(res, req.method === 'HEAD' ? '' : session.visibleText());
 }
 
 function handleState(req, res, url) {
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    sendMethodNotAllowed(res);
-    return;
-  }
+  if (!requireRead(req, res)) return;
   const body = JSON.stringify(session.describeState(parseTailRows(url.searchParams.get('tailRows'))));
   send(
     res,
@@ -236,7 +233,7 @@ function handleStream(req, res, url) {
     'X-Accel-Buffering': 'no',
     Connection: 'keep-alive',
   });
-  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+  res.flushHeaders?.();
 
   let attached = null;
   let ka = null;
@@ -265,7 +262,7 @@ function handleStream(req, res, url) {
         ended: session.ended,
       })
     );
-    if (snapshot && snapshot.length) {
+    if (snapshot?.length) {
       sub.send(
         frame({
           t: 'o',
@@ -304,7 +301,7 @@ function handleInput(req, res) {
     },
     (err, body, errorCode) => {
       if (err || errorCode) return sendBodyError(res, errorCode);
-      if (Buffer.isBuffer(body) && body.length) {
+      if (body.length) {
         session.write(body.toString('utf8'));
       }
       sendJsonFrame(res, { t: 'ack', ok: true, seq: session.bytes });
@@ -328,7 +325,7 @@ function handleResize(req, res) {
       if (err || errorCode) return sendBodyError(res, errorCode);
 
       let parsed = {};
-      if (body && body.length) {
+      if (body.length) {
         try {
           parsed = JSON.parse(body.toString('utf8'));
         } catch {
@@ -344,31 +341,19 @@ function handleResize(req, res) {
   );
 }
 
+const API_HANDLERS = new Map([
+  ['/api/snapshot', handleSnapshot],
+  ['/api/state', handleState],
+  ['/api/stream', handleStream],
+  ['/api/input', handleInput],
+  ['/api/resize', handleResize],
+]);
+
 function handleRequest(req, res) {
   const url = requestUrl(req);
-  const pathname = url.pathname;
-
-  if (pathname === '/api/snapshot') {
-    handleSnapshot(req, res);
-    return;
-  }
-  if (pathname === '/api/state') {
-    handleState(req, res, url);
-    return;
-  }
-  if (pathname === '/api/stream') {
-    handleStream(req, res, url);
-    return;
-  }
-  if (pathname === '/api/input') {
-    handleInput(req, res);
-    return;
-  }
-  if (pathname === '/api/resize') {
-    handleResize(req, res);
-    return;
-  }
-  if (serveStatic(req, res, pathname)) return;
+  const handler = API_HANDLERS.get(url.pathname);
+  if (handler) return handler(req, res, url);
+  if (serveStatic(req, res, url.pathname)) return;
 
   sendNotFound(res);
 }

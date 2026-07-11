@@ -3,19 +3,14 @@
 // Simulate the proxy redirecting API calls to a different origin and verify the
 // frontend requires a refresh instead of silently retrying.
 
-const puppeteer = require('puppeteer-core');
+const { launchBrowser, sleep } = require('./browser-test-utils');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
-const CHROME = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
 const REDIRECT_TARGET =
   process.env.NAG_REDIRECT_TARGET || 'https://example.com/acknowledge';
 
 (async () => {
-  const browser = await puppeteer.launch({
-    executablePath: CHROME,
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
-  });
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   await page.setRequestInterception(true);
   page.on('request', (req) => {
@@ -36,7 +31,7 @@ const REDIRECT_TARGET =
   });
 
   await page.goto(URL, { waitUntil: 'domcontentloaded' });
-  await new Promise((r) => setTimeout(r, 1500));
+  await sleep(1500);
 
   const result = await page.evaluate(() => {
     const o = document.getElementById('overlay');

@@ -79,12 +79,12 @@ class Session {
         env,
       });
     } catch (e) {
-      const detail = e && e.message ? `: ${e.message}` : '';
+      const detail = e?.message ? `: ${e.message}` : '';
       throw new Error(`Failed to start login shell ${JSON.stringify(resolved.file)}${detail}`);
     }
 
     this.pty.onData((data) => this._onData(data));
-    this.pty.onExit((e) => this._onExit(e && e.exitCode != null ? e.exitCode : 0));
+    this.pty.onExit((e) => this._onExit(e?.exitCode ?? 0));
   }
 
   _onData(data) {
@@ -182,7 +182,7 @@ class Session {
   snapshot() {
     try {
       return this.serializer.serialize();
-    } catch (e) {
+    } catch {
       return '';
     }
   }
@@ -243,11 +243,9 @@ class Session {
   getBufferRows(buffer, start, count) {
     const safeStart = clamp(Number.parseInt(start, 10), 0, buffer.length);
     const safeEnd = clamp(safeStart + clampRowCount(count), safeStart, buffer.length);
-    const rows = [];
-    for (let i = safeStart; i < safeEnd; i++) {
-      rows.push(describeBufferLine(buffer.getLine(i), i));
-    }
-    return rows;
+    return Array.from({ length: safeEnd - safeStart }, (_, offset) =>
+      describeBufferLine(buffer.getLine(safeStart + offset), safeStart + offset)
+    );
   }
 
   removeSubscriber(sub) {
@@ -268,12 +266,12 @@ class Session {
     if (this.ended) return;
     try {
       this.pty.resize(cols, rows);
-    } catch (e) {
+    } catch {
       /* pty may have just exited */
     }
     try {
       this.headless.resize(cols, rows);
-    } catch (e) {
+    } catch {
       /* ignore */
     }
   }
@@ -284,18 +282,18 @@ class Session {
   // measure: the unit's cgroup teardown is the authoritative cleanup.
   destroy() {
     if (this.ended) return;
-    const pid = this.pty && this.pty.pid;
+    const pid = this.pty?.pid;
     if (pid) {
       try {
         process.kill(-pid, 'SIGKILL');
         return;
-      } catch (e) {
+      } catch {
         /* group may already be gone; fall back below */
       }
     }
     try {
       this.pty.kill();
-    } catch (e) {
+    } catch {
       /* ignore */
     }
   }
@@ -331,7 +329,7 @@ function resolveShell(deps = { fs, os }) {
   try {
     info = deps.os.userInfo();
   } catch (e) {
-    const detail = e && e.message ? `: ${e.message}` : '';
+    const detail = e?.message ? `: ${e.message}` : '';
     throw new Error(`Failed to resolve login shell from passwd${detail}`);
   }
 
@@ -343,7 +341,7 @@ function resolveShell(deps = { fs, os }) {
   try {
     deps.fs.accessSync(file, deps.fs.constants.X_OK);
   } catch (e) {
-    const detail = e && e.message ? `: ${e.message}` : '';
+    const detail = e?.message ? `: ${e.message}` : '';
     throw new Error(`Login shell ${JSON.stringify(file)} is not executable${detail}`);
   }
 

@@ -19,7 +19,7 @@
     "test:exit": "node scripts/browser-exit.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.12.0"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

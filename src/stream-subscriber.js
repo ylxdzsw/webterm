@@ -19,7 +19,7 @@ function createStreamSubscriber(
     res.off('drain', flush);
     try {
       res.end();
-    } catch (e) {
+    } catch {
       /* peer may already be gone */
     }
     onClose();
@@ -28,7 +28,7 @@ function createStreamSubscriber(
   function writeNow(line) {
     try {
       waitingForDrain = !res.write(line);
-    } catch (e) {
+    } catch {
       close();
     }
   }

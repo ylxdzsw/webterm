@@ -22,7 +22,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - run: npm run test:unit
+      - run: node --run test:unit
 
   browser:
     name: browser tests

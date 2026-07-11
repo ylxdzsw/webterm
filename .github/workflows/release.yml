@@ -17,7 +17,7 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci --omit=dev
-      - run: npm run test:unit
+      - run: node --run test:unit
       - name: build bundle
         run: |
           ver="${GITHUB_REF_NAME#v}"

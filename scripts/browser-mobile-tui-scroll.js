@@ -6,12 +6,10 @@
 // touch swipes, and verifies the visible terminal content changes enough to be
 // useful. It intentionally checks screen movement, not just raw wheel packets.
 
-const puppeteer = require('puppeteer-core');
-const { dispatchTouchSwipe, sleep, terminalPoint, waitFor } = require('./browser-test-utils');
+const { dispatchTouchSwipe, launchBrowser, sleep, terminalPoint, waitFor } = require('./browser-test-utils');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
 const BASE = URL.replace(/\/$/, '');
-const CHROME = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
 
 async function visibleText(page) {
   return page.evaluate(() => document.querySelector('.xterm-rows')?.innerText || '');
@@ -118,11 +116,7 @@ async function testVim(page) {
 
 (async () => {
   const errors = [];
-  const browser = await puppeteer.launch({
-    executablePath: CHROME,
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
-  });
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   await page.setViewport({
     width: 390,
