@@ -73,6 +73,37 @@ async function dispatchTouchDoubleTap(page, point) {
   });
   await sleep(1000);
 
+  const stableResize = await page.evaluate(async () => {
+    const fitHost = document.getElementById('terminal-fit');
+    const before = {
+      cols: term.cols,
+      rows: term.rows,
+      width: fitHost.getBoundingClientRect().width,
+      height: fitHost.getBoundingClientRect().height,
+    };
+    for (let i = 0; i < 8; i++) window.dispatchEvent(new Event('resize'));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    return {
+      before,
+      after: {
+        cols: term.cols,
+        rows: term.rows,
+        width: fitHost.getBoundingClientRect().width,
+        height: fitHost.getBoundingClientRect().height,
+        scrollWidth: fitHost.scrollWidth,
+        clientWidth: fitHost.clientWidth,
+      },
+    };
+  });
+  if (
+    stableResize.after.cols !== stableResize.before.cols ||
+    stableResize.after.rows !== stableResize.before.rows ||
+    stableResize.after.width !== stableResize.before.width ||
+    stableResize.after.height !== stableResize.before.height ||
+    stableResize.after.scrollWidth > stableResize.after.clientWidth
+  ) {
+    errors.push('repeated stable viewport resizes drifted terminal dimensions: ' + JSON.stringify(stableResize));
+  }
   const phoneFontSize = await page.evaluate(() => term.options.fontSize);
   if (phoneFontSize !== 12) {
     errors.push('phone viewport should use 12px terminal font: ' + phoneFontSize);
@@ -99,6 +130,16 @@ async function dispatchTouchDoubleTap(page, point) {
     hasTouch: true,
   });
   await page.waitForFunction(() => term.options.fontSize === 12, { timeout: 3000 });
+  const restoredSize = await page.evaluate(() => ({ cols: term.cols, rows: term.rows }));
+  if (
+    restoredSize.cols !== stableResize.before.cols ||
+    restoredSize.rows !== stableResize.before.rows
+  ) {
+    errors.push(
+      'terminal dimensions did not return after mobile viewport restore: ' +
+        JSON.stringify({ before: stableResize.before, restored: restoredSize })
+    );
+  }
 
   const touchCss = await page.evaluate(() => {
     const terminal = document.getElementById('terminal');
@@ -222,6 +263,8 @@ async function dispatchTouchDoubleTap(page, point) {
   const wheelUpCount = countWheelReports(swipePayloads, 64);
   const wheelDownCount = countWheelReports(reverseSwipePayloads, 65);
   console.log('touchCss         :', JSON.stringify(touchCss));
+  console.log('stableResize     :', JSON.stringify(stableResize));
+  console.log('restoredSize     :', JSON.stringify(restoredSize));
   console.log('lineMetric       :', JSON.stringify(lineMetric));
   console.log('tapPayloads       :', JSON.stringify(inputPayloads.slice(tapStart, doubleTapStart)));
   console.log('doubleTapPayloads :', JSON.stringify(doubleTapPayloads));

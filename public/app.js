@@ -54,6 +54,7 @@ const SGR_MOUSE_RE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])/;
 
 const els = {
   terminal: document.getElementById('terminal'),
+  terminalFit: document.getElementById('terminal-fit'),
   mobileKeys: document.getElementById('mobile-keys'),
   status: document.getElementById('status'),
   overlay: document.getElementById('overlay'),
@@ -814,7 +815,7 @@ function observeTerminalSize() {
   const observer = new ResizeObserver((entries) => {
     if (entries[0]?.contentRect.height > 0) scheduleResize();
   });
-  observer.observe(els.terminal);
+  observer.observe(els.terminalFit);
 }
 
 // ---------------------------------------------------------------- mobile touch scroll
@@ -1056,7 +1057,7 @@ function touchScrollLinePx() {
   const heights = [];
   const viewport = term.element?.querySelector('.xterm-viewport');
   const scrollable = term.element?.querySelector('.xterm-scrollable-element');
-  for (const el of [viewport, scrollable, term.element, els.terminal]) {
+  for (const el of [viewport, scrollable, term.element, els.terminalFit, els.terminal]) {
     if (!el) continue;
     const rect = el.getBoundingClientRect();
     if (rect.height > 0) heights.push(rect.height);
@@ -1139,7 +1140,7 @@ document.addEventListener('keydown', (ev) => {
 });
 
 // ---------------------------------------------------------------- go
-term.open(els.terminal);
+term.open(els.terminalFit);
 fitAddon.fit();
 observeTerminalSize();
 initMobileTouchScroll();

@@ -26,8 +26,14 @@ body {
 #terminal {
   position: fixed;
   inset: 0 0 calc(var(--mobile-key-rail-height) + var(--mobile-key-terminal-gap));
-  padding: 6px;
   overscroll-behavior: contain;
+}
+
+/* FitAddon measures its direct parent, so keep this box free of padding. */
+#terminal-fit {
+  position: absolute;
+  inset: 6px;
+  overflow: hidden;
 }
 
 .mobile-keys {

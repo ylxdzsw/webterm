@@ -116,6 +116,20 @@ UTF-8 locale, and the PTY is resized to match the browser viewport before the
 first paint, so full-screen apps render correctly. Mouse reporting and bracketed
 paste are passed through by xterm.js.
 
+### Mobile layout
+
+`FitAddon` measures its direct parent, so xterm is mounted in the unpadded,
+CSS-sized `#terminal-fit` host. Keep visual gutters, safe-area handling, and
+the mobile key rail on the outer `#terminal` container; adding padding to the
+fit host makes its measured size disagree with xterm's available cell area.
+
+The mobile browser test asserts that repeated resize events do not drift the
+terminal size and that a phone viewport returns to its original dimensions:
+
+```bash
+npm run test:mobile-touch-scroll
+```
+
 ## Limitations / trade-offs
 
 - **A process restart loses that slot's session.** Persistence is in-process by
