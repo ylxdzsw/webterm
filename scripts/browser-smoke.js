@@ -170,6 +170,7 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
     !virtualKeys.pageScrolls.some(
       (scroll) => scroll && scroll.left === 0 && scroll.top === virtualKeys.documentScrollHeight
     ) ||
+    virtualKeys.pageScrolls.length > 3 ||
     // Virtual keys must not disturb keyboard state: focus stays on the
     // terminal textarea that the keyboard button gave it.
     !String(virtualKeys.activeElementClass).includes('xterm-helper-textarea') ||
@@ -178,6 +179,33 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
     JSON.stringify(virtualKeys.payloads) !== JSON.stringify(expectedVirtualKeyPayloads)
   ) {
     errors.push('virtual key rail mismatch: ' + JSON.stringify(virtualKeys));
+  }
+
+  const keyboardViewport = await page.evaluate(async () => {
+    const root = document.documentElement;
+    const terminal = document.getElementById('terminal');
+    const rail = document.getElementById('mobile-keys');
+    root.style.setProperty('--visual-viewport-offset-top', '180px');
+    root.style.setProperty('--keyboard-inset', '220px');
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const terminalBox = terminal.getBoundingClientRect();
+    const screenBox = document.querySelector('.xterm-screen').getBoundingClientRect();
+    const railBox = rail.getBoundingClientRect();
+    root.style.removeProperty('--visual-viewport-offset-top');
+    root.style.removeProperty('--keyboard-inset');
+    return {
+      terminalTop: terminalBox.top,
+      terminalBottom: terminalBox.bottom,
+      screenTop: screenBox.top,
+      railTop: railBox.top,
+    };
+  });
+  if (
+    Math.abs(keyboardViewport.terminalTop - 180) > 1 ||
+    Math.abs(keyboardViewport.screenTop - 186) > 1 ||
+    Math.abs(keyboardViewport.railTop - keyboardViewport.terminalBottom - 3) > 1
+  ) {
+    errors.push('keyboard viewport did not keep the terminal cursor area visible: ' + JSON.stringify(keyboardViewport));
   }
   await page.evaluate(() => {
     document.querySelector('.xterm-helper-textarea')?.focus();

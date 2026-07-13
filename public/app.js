@@ -661,9 +661,14 @@ function scrollPageToBottomForKeyboard() {
   };
   scroll();
   requestAnimationFrame(scroll);
-  window.setTimeout(scroll, 80);
-  window.setTimeout(scroll, 300);
-  window.visualViewport?.addEventListener('resize', scroll, { once: true });
+  // Correct once when the keyboard first changes the visual viewport. Further
+  // delayed scrolls can pan iOS after the keyboard has visibly settled, which
+  // changes terminal geometry and makes xterm redraw several times.
+  const viewport = window.visualViewport;
+  if (viewport) {
+    viewport.addEventListener('resize', scroll, { once: true });
+    window.setTimeout(() => viewport.removeEventListener('resize', scroll), 500);
+  }
 }
 
 function isSgrMotion(seq) {
@@ -816,16 +821,16 @@ function sendResize(silent) {
 window.addEventListener('resize', scheduleResize);
 window.visualViewport?.addEventListener('resize', scheduleResize);
 
-// On iOS Safari the soft keyboard shrinks only the visual viewport; fixed
-// elements stay pinned to the layout viewport and end up behind the keyboard.
-// Track the obscured height as --keyboard-inset so CSS can lift the key rail
-// and the terminal's bottom edge above the keyboard. On Chrome/Android the
-// viewport meta's interactive-widget=resizes-content makes this ~0.
+// On iOS Safari the soft keyboard can both shrink and pan the visual viewport.
+// Fixed elements use layout-viewport coordinates, so move the terminal's top
+// edge with the pan as well as lifting its bottom edge above the keyboard.
+// This keeps a short terminal history, whose cursor is near row zero, visible.
 function updateKeyboardInset() {
   const vv = window.visualViewport;
   if (!vv) return;
   const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
   document.documentElement.style.setProperty('--keyboard-inset', inset.toFixed(2) + 'px');
+  document.documentElement.style.setProperty('--visual-viewport-offset-top', vv.offsetTop.toFixed(2) + 'px');
 }
 window.visualViewport?.addEventListener('resize', updateKeyboardInset);
 window.visualViewport?.addEventListener('scroll', updateKeyboardInset);
