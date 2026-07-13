@@ -112,6 +112,9 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
       await new Promise((resolve) => setTimeout(resolve, 120));
       keyboardActiveElementClass = document.activeElement ? document.activeElement.className : '';
       for (const button of rail.querySelectorAll('button[data-input]')) {
+        // Simulate a real tap: pointerdown (which the app cancels to keep
+        // focus) precedes the click.
+        button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
         button.click();
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
@@ -167,7 +170,9 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
     !virtualKeys.pageScrolls.some(
       (scroll) => scroll && scroll.left === 0 && scroll.top === virtualKeys.documentScrollHeight
     ) ||
-    String(virtualKeys.activeElementClass).includes('xterm-helper-textarea') ||
+    // Virtual keys must not disturb keyboard state: focus stays on the
+    // terminal textarea that the keyboard button gave it.
+    !String(virtualKeys.activeElementClass).includes('xterm-helper-textarea') ||
     JSON.stringify(virtualKeys.labels) !==
       JSON.stringify(['⌨️', 'Tab', 'Esc', '^C', '^D', '←', '↓', '↑', '→', 'PgUp', 'PgDn', 'Home', 'End']) ||
     JSON.stringify(virtualKeys.payloads) !== JSON.stringify(expectedVirtualKeyPayloads)

@@ -616,6 +616,13 @@ const VIRTUAL_KEY_INPUT = Object.freeze({
   end: '\x1b[F',
 });
 
+// Keep taps on virtual keys from moving focus (and thus toggling the soft
+// keyboard). The click still fires; only the focus change is suppressed.
+els.mobileKeys.addEventListener('pointerdown', (ev) => {
+  const button = ev.target.closest('button');
+  if (button && !button.hasAttribute('data-keyboard')) ev.preventDefault();
+});
+
 els.mobileKeys.addEventListener('click', (ev) => {
   const button = ev.target.closest('button');
   if (!button || !els.mobileKeys.contains(button)) return;
@@ -628,7 +635,6 @@ els.mobileKeys.addEventListener('click', (ev) => {
   const data = VIRTUAL_KEY_INPUT[button.dataset.input];
   if (!data) return;
   ev.preventDefault();
-  term.blur();
   queueImmediateInput(data);
 });
 
@@ -809,6 +815,21 @@ function sendResize(silent) {
 
 window.addEventListener('resize', scheduleResize);
 window.visualViewport?.addEventListener('resize', scheduleResize);
+
+// On iOS Safari the soft keyboard shrinks only the visual viewport; fixed
+// elements stay pinned to the layout viewport and end up behind the keyboard.
+// Track the obscured height as --keyboard-inset so CSS can lift the key rail
+// and the terminal's bottom edge above the keyboard. On Chrome/Android the
+// viewport meta's interactive-widget=resizes-content makes this ~0.
+function updateKeyboardInset() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+  document.documentElement.style.setProperty('--keyboard-inset', inset.toFixed(2) + 'px');
+}
+window.visualViewport?.addEventListener('resize', updateKeyboardInset);
+window.visualViewport?.addEventListener('scroll', updateKeyboardInset);
+updateKeyboardInset();
 
 function observeTerminalSize() {
   if (typeof ResizeObserver !== 'function') return;
