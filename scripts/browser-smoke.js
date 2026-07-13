@@ -187,23 +187,29 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
     const rail = document.getElementById('mobile-keys');
     root.style.setProperty('--visual-viewport-offset-top', '180px');
     root.style.setProperty('--keyboard-inset', '220px');
+    root.style.setProperty('--mobile-key-bottom-gap', '6px');
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const terminalBox = terminal.getBoundingClientRect();
     const screenBox = document.querySelector('.xterm-screen').getBoundingClientRect();
     const railBox = rail.getBoundingClientRect();
+    const buttonBox = rail.querySelector('button').getBoundingClientRect();
     root.style.removeProperty('--visual-viewport-offset-top');
     root.style.removeProperty('--keyboard-inset');
+    root.style.removeProperty('--mobile-key-bottom-gap');
     return {
       terminalTop: terminalBox.top,
       terminalBottom: terminalBox.bottom,
       screenTop: screenBox.top,
       railTop: railBox.top,
+      buttonBottom: buttonBox.bottom,
+      keyboardTop: window.innerHeight - 220,
     };
   });
   if (
     Math.abs(keyboardViewport.terminalTop - 180) > 1 ||
     Math.abs(keyboardViewport.screenTop - 186) > 1 ||
-    Math.abs(keyboardViewport.railTop - keyboardViewport.terminalBottom - 3) > 1
+    Math.abs(keyboardViewport.railTop - keyboardViewport.terminalBottom - 3) > 1 ||
+    Math.abs(keyboardViewport.keyboardTop - keyboardViewport.buttonBottom - 6) > 1
   ) {
     errors.push('keyboard viewport did not keep the terminal cursor area visible: ' + JSON.stringify(keyboardViewport));
   }

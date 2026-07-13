@@ -829,8 +829,11 @@ function updateKeyboardInset() {
   const vv = window.visualViewport;
   if (!vv) return;
   const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-  document.documentElement.style.setProperty('--keyboard-inset', inset.toFixed(2) + 'px');
-  document.documentElement.style.setProperty('--visual-viewport-offset-top', vv.offsetTop.toFixed(2) + 'px');
+  const rootStyle = document.documentElement.style;
+  rootStyle.setProperty('--keyboard-inset', inset.toFixed(2) + 'px');
+  rootStyle.setProperty('--visual-viewport-offset-top', vv.offsetTop.toFixed(2) + 'px');
+  if (inset > 0) rootStyle.setProperty('--mobile-key-bottom-gap', '6px');
+  else rootStyle.removeProperty('--mobile-key-bottom-gap');
 }
 window.visualViewport?.addEventListener('resize', updateKeyboardInset);
 window.visualViewport?.addEventListener('scroll', updateKeyboardInset);

@@ -6,6 +6,7 @@
   --err: #ff6b6b;
   --mobile-key-rail-height: 0px;
   --mobile-key-terminal-gap: 0px;
+  --mobile-key-bottom-gap: env(safe-area-inset-bottom, 0px);
   --keyboard-inset: 0px;
   --visual-viewport-offset-top: 0px;
 }
@@ -45,7 +46,7 @@ body {
   display: none;
   gap: 6px;
   height: var(--mobile-key-rail-height);
-  padding: 6px 8px env(safe-area-inset-bottom, 0px);
+  padding: 6px 8px var(--mobile-key-bottom-gap);
   overflow-x: auto;
   overflow-y: hidden;
   background: rgba(11, 14, 20, 0.96);
@@ -79,7 +80,7 @@ body {
 
 @media (pointer: coarse), (max-width: 700px) {
   :root {
-    --mobile-key-rail-height: calc(43px + env(safe-area-inset-bottom, 0px));
+    --mobile-key-rail-height: calc(43px + var(--mobile-key-bottom-gap));
     --mobile-key-terminal-gap: 3px;
   }
 
