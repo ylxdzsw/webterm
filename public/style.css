@@ -49,6 +49,8 @@ body {
   padding: 6px 8px var(--mobile-key-bottom-gap);
   overflow-x: auto;
   overflow-y: hidden;
+  overscroll-behavior: contain;
+  touch-action: pan-x;
   background: rgba(11, 14, 20, 0.96);
   border-top: 1px solid rgba(255, 255, 255, 0.12);
   -webkit-overflow-scrolling: touch;

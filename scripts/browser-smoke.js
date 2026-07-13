@@ -138,6 +138,7 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
       buttonBottom: firstButtonBox.bottom,
       viewportHeight: window.innerHeight,
       terminalPosition: getComputedStyle(terminal).position,
+      railTouchAction: getComputedStyle(rail).touchAction,
       keyboardActiveElementClass,
       activeElementClass: document.activeElement ? document.activeElement.className : '',
       pageScrolls,
@@ -166,6 +167,7 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
     Math.abs(virtualKeys.buttonTop - virtualKeys.railTop - 7) > 1 ||
     Math.abs(virtualKeys.buttonBottom - virtualKeys.viewportHeight) > 1 ||
     virtualKeys.terminalPosition !== 'fixed' ||
+    virtualKeys.railTouchAction !== 'pan-x' ||
     !String(virtualKeys.keyboardActiveElementClass).includes('xterm-helper-textarea') ||
     !virtualKeys.pageScrolls.some(
       (scroll) => scroll && scroll.left === 0 && scroll.top === virtualKeys.documentScrollHeight
