@@ -90,6 +90,18 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
     const originalScrollTo = window.scrollTo.bind(window);
     const payloads = [];
     const pageScrolls = [];
+    const clipboardText = 'MOBILE_PASTE';
+    let clipboardReads = 0;
+    const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        readText: async () => {
+          clipboardReads += 1;
+          return clipboardText;
+        },
+      },
+    });
     window.fetch = async (resource, init = {}) => {
       const url = String(resource && resource.url ? resource.url : resource);
       if (url === 'api/input' || url.endsWith('/api/input')) {
@@ -111,6 +123,10 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
       rail.querySelector('button[data-keyboard]')?.click();
       await new Promise((resolve) => setTimeout(resolve, 120));
       keyboardActiveElementClass = document.activeElement ? document.activeElement.className : '';
+      const pasteButton = rail.querySelector('button[data-paste]');
+      pasteButton.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+      pasteButton.click();
+      await new Promise((resolve) => setTimeout(resolve, 120));
       for (const button of rail.querySelectorAll('button[data-input]')) {
         // Simulate a real tap: pointerdown (which the app cancels to keep
         // focus) precedes the click.
@@ -121,6 +137,11 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
     } finally {
       window.fetch = originalFetch;
       window.scrollTo = originalScrollTo;
+      if (clipboardDescriptor) {
+        Object.defineProperty(navigator, 'clipboard', clipboardDescriptor);
+      } else {
+        delete navigator.clipboard;
+      }
     }
 
     const railBox = rail.getBoundingClientRect();
@@ -129,6 +150,7 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
     return {
       labels: Array.from(rail.querySelectorAll('button')).map((button) => button.textContent),
       payloads,
+      clipboardReads,
       visible: getComputedStyle(rail).display !== 'none',
       singleLine: rail.scrollHeight <= rail.clientHeight + 1,
       horizontallyScrollable: rail.scrollWidth > rail.clientWidth,
@@ -146,7 +168,7 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
     };
   });
   const expectedVirtualKeyPayloads = [
-    '\t',
+    '\x1b[200~MOBILE_PASTE\x1b[201~',
     '\x1b',
     '\x03',
     '\x04',
@@ -176,8 +198,9 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
     // Virtual keys must not disturb keyboard state: focus stays on the
     // terminal textarea that the keyboard button gave it.
     !String(virtualKeys.activeElementClass).includes('xterm-helper-textarea') ||
+    virtualKeys.clipboardReads !== 1 ||
     JSON.stringify(virtualKeys.labels) !==
-      JSON.stringify(['⌨️', 'Tab', 'Esc', '^C', '^D', '←', '↓', '↑', '→', 'PgUp', 'PgDn', 'Home', 'End']) ||
+      JSON.stringify(['⌨️', '📋', 'Esc', '^C', '^D', '←', '↓', '↑', '→', 'PgUp', 'PgDn', 'Home', 'End']) ||
     JSON.stringify(virtualKeys.payloads) !== JSON.stringify(expectedVirtualKeyPayloads)
   ) {
     errors.push('virtual key rail mismatch: ' + JSON.stringify(virtualKeys));

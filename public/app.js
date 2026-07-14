@@ -623,13 +623,23 @@ els.mobileKeys.addEventListener('pointerdown', (ev) => {
   if (button && !button.hasAttribute('data-keyboard')) ev.preventDefault();
 });
 
-els.mobileKeys.addEventListener('click', (ev) => {
+els.mobileKeys.addEventListener('click', async (ev) => {
   const button = ev.target.closest('button');
   if (!button || !els.mobileKeys.contains(button)) return;
   if (button.hasAttribute('data-keyboard')) {
     ev.preventDefault();
     term.focus();
     scrollPageToBottomForKeyboard();
+    return;
+  }
+  if (button.hasAttribute('data-paste')) {
+    ev.preventDefault();
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) term.paste(text);
+    } catch {
+      setStatus('paste unavailable', 'warn');
+    }
     return;
   }
   const data = VIRTUAL_KEY_INPUT[button.dataset.input];
