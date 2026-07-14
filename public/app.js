@@ -44,7 +44,7 @@ const TOUCH_MOMENTUM_STOP_VELOCITY = 0.08;
 const TOUCH_MOMENTUM_DECAY_PER_FRAME = 0.95;
 const TOUCH_MOMENTUM_MAX_MS = 900;
 const TOUCH_DOUBLE_TAP_TIMEOUT_MS = 300;
-const TOUCH_DOUBLE_TAP_SLOP_PX = 100;
+const TOUCH_DOUBLE_TAP_SLOP_PX = 40;
 const DESKTOP_TERMINAL_FONT_SIZE = 14;
 const PHONE_TERMINAL_FONT_SIZE = 12;
 const PHONE_TERMINAL_MAX_WIDTH = 700;
@@ -639,6 +639,13 @@ els.mobileKeys.addEventListener('click', async (ev) => {
       if (text) term.paste(text);
     } catch {
       setStatus('paste unavailable', 'warn');
+      // Auto-dismiss this transient failure. setStatus clears statusHideTimer on
+      // every call, so if any newer status supersedes it before this fires, the
+      // timer is cancelled and we never clobber that newer message.
+      statusHideTimer = setTimeout(() => {
+        statusHideTimer = null;
+        setStatus('');
+      }, 2500);
     }
     return;
   }
@@ -778,7 +785,9 @@ function flushInput() {
   clearInputTimers();
   if (inputInFlight || !hasPendingInput()) return;
   const segment = inputSegments.shift();
-  const payload = segment.immediate ? segment.data : compactMouseMotion(segment.data);
+  // Non-immediate segments are already compacted incrementally in
+  // queueNormalInput as data is appended, so no re-compaction is needed here.
+  const payload = segment.data;
   if (!payload) {
     if (hasPendingInput()) scheduleFlush();
     return;
