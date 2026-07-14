@@ -28,7 +28,8 @@ body {
 
 #terminal {
   position: fixed;
-  inset: var(--visual-viewport-offset-top) 0 calc(var(--mobile-key-rail-height) + var(--mobile-key-terminal-gap) + var(--keyboard-inset));
+  inset: calc(env(safe-area-inset-top, 0px) + var(--visual-viewport-offset-top)) 0
+    calc(var(--mobile-key-rail-height) + var(--mobile-key-terminal-gap) + var(--keyboard-inset));
   overscroll-behavior: contain;
 }
 

@@ -83,6 +83,21 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
   );
   await sleep(1500);
 
+  const pwaMetadata = await page.evaluate(() =>
+    Object.fromEntries(
+      ['theme-color', 'apple-mobile-web-app-capable', 'apple-mobile-web-app-status-bar-style'].map(
+        (name) => [name, document.querySelector(`meta[name="${name}"]`)?.content]
+      )
+    )
+  );
+  if (
+    pwaMetadata['theme-color'] !== '#0b0e14' ||
+    pwaMetadata['apple-mobile-web-app-capable'] !== 'yes' ||
+    pwaMetadata['apple-mobile-web-app-status-bar-style'] !== 'black-translucent'
+  ) {
+    errors.push('PWA status bar metadata mismatch: ' + JSON.stringify(pwaMetadata));
+  }
+
   const virtualKeys = await page.evaluate(async () => {
     const rail = document.getElementById('mobile-keys');
     const terminal = document.getElementById('terminal');
