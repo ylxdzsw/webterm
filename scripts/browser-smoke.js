@@ -254,6 +254,34 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
     errors.push('keyboard viewport did not keep the terminal cursor area visible: ' + JSON.stringify(keyboardViewport));
   }
 
+  const closedKeyboardSafeArea = await page.evaluate(async () => {
+    const root = document.documentElement;
+    const rail = document.getElementById('mobile-keys');
+    const button = rail.querySelector('button');
+    const rootRule = Array.from(document.styleSheets)
+      .flatMap((sheet) => Array.from(sheet.cssRules))
+      .find((rule) => rule.selectorText === ':root');
+    root.style.setProperty('--mobile-key-bottom-gap', '24px');
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const railBox = rail.getBoundingClientRect();
+    const buttonBox = button.getBoundingClientRect();
+    root.style.removeProperty('--mobile-key-bottom-gap');
+    return {
+      buttonBottom: buttonBox.bottom,
+      defaultBottomGap: rootRule?.style.getPropertyValue('--mobile-key-bottom-gap').trim(),
+      railBottom: railBox.bottom,
+    };
+  });
+  if (
+    closedKeyboardSafeArea.defaultBottomGap !== 'env(safe-area-inset-bottom, 0px)' ||
+    Math.abs(closedKeyboardSafeArea.railBottom - closedKeyboardSafeArea.buttonBottom - 24) > 1
+  ) {
+    errors.push(
+      'closed-keyboard rail did not avoid the bottom safe area: ' +
+        JSON.stringify(closedKeyboardSafeArea)
+    );
+  }
+
   const resizedLayoutKeyboard = await page.evaluate(() => {
     const rootStyle = document.documentElement.style;
     const viewport = window.visualViewport;
