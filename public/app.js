@@ -844,18 +844,31 @@ window.visualViewport?.addEventListener('resize', scheduleResize);
 // Fixed elements use layout-viewport coordinates, so move the terminal's top
 // edge with the pan as well as lifting its bottom edge above the keyboard.
 // This keeps a short terminal history, whose cursor is near row zero, visible.
-function updateKeyboardInset() {
-  const vv = window.visualViewport;
+const KEYBOARD_VIEWPORT_REDUCTION = 150;
+let visualViewportBaseline = null;
+
+function updateKeyboardInset(vv = window.visualViewport, layoutHeight = window.innerHeight) {
   if (!vv) return;
-  const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+  // Browser chrome moves less than a keyboard. Keep a closed-viewport baseline
+  // per orientation because iOS standalone mode can resize both viewports.
+  const viewportWidth = Math.round(vv.width);
+  if (!visualViewportBaseline || Math.abs(visualViewportBaseline.width - viewportWidth) > 1) {
+    visualViewportBaseline = { width: viewportWidth, height: vv.height };
+  } else {
+    visualViewportBaseline.height = Math.max(visualViewportBaseline.height, vv.height);
+  }
+
+  const inset = Math.max(0, layoutHeight - vv.height - vv.offsetTop);
+  const viewportReduction = visualViewportBaseline.height - vv.height;
+  const keyboardOpen = Math.max(inset, viewportReduction) >= KEYBOARD_VIEWPORT_REDUCTION;
   const rootStyle = document.documentElement.style;
   rootStyle.setProperty('--keyboard-inset', inset.toFixed(2) + 'px');
   rootStyle.setProperty('--visual-viewport-offset-top', vv.offsetTop.toFixed(2) + 'px');
-  if (inset > 0) rootStyle.setProperty('--mobile-key-bottom-gap', '6px');
+  if (keyboardOpen) rootStyle.setProperty('--mobile-key-bottom-gap', '6px');
   else rootStyle.removeProperty('--mobile-key-bottom-gap');
 }
-window.visualViewport?.addEventListener('resize', updateKeyboardInset);
-window.visualViewport?.addEventListener('scroll', updateKeyboardInset);
+window.visualViewport?.addEventListener('resize', () => updateKeyboardInset());
+window.visualViewport?.addEventListener('scroll', () => updateKeyboardInset());
 updateKeyboardInset();
 
 function observeTerminalSize() {

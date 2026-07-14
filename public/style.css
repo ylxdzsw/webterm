@@ -6,7 +6,7 @@
   --err: #ff6b6b;
   --mobile-key-rail-height: 0px;
   --mobile-key-terminal-gap: 0px;
-  --mobile-key-bottom-gap: env(safe-area-inset-bottom, 0px);
+  --mobile-key-bottom-gap: env(safe-area-max-inset-bottom, 0px);
   --keyboard-inset: 0px;
   --visual-viewport-offset-top: 0px;
 }

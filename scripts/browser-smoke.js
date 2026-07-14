@@ -253,6 +253,31 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
   ) {
     errors.push('keyboard viewport did not keep the terminal cursor area visible: ' + JSON.stringify(keyboardViewport));
   }
+
+  const resizedLayoutKeyboard = await page.evaluate(() => {
+    const rootStyle = document.documentElement.style;
+    const viewport = window.visualViewport;
+    const reducedHeight = viewport.height - 220;
+    window.updateKeyboardInset(
+      { width: viewport.width, height: reducedHeight, offsetTop: 0 },
+      reducedHeight
+    );
+    const result = {
+      keyboardInset: rootStyle.getPropertyValue('--keyboard-inset'),
+      bottomGap: rootStyle.getPropertyValue('--mobile-key-bottom-gap'),
+    };
+    window.updateKeyboardInset(viewport, window.innerHeight);
+    return result;
+  });
+  if (
+    resizedLayoutKeyboard.keyboardInset !== '0.00px' ||
+    resizedLayoutKeyboard.bottomGap !== '6px'
+  ) {
+    errors.push(
+      'resized-layout keyboard did not use the compact rail gap: ' +
+        JSON.stringify(resizedLayoutKeyboard)
+    );
+  }
   await page.evaluate(() => {
     document.querySelector('.xterm-helper-textarea')?.focus();
   });
