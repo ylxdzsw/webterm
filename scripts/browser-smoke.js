@@ -84,6 +84,14 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
   );
   await sleep(1500);
 
+  const cursorOptions = await page.evaluate(() => ({
+    blink: term.options.cursorBlink,
+    style: term.options.cursorStyle,
+  }));
+  if (!cursorOptions.blink || cursorOptions.style !== 'bar') {
+    errors.push('terminal cursor options mismatch: ' + JSON.stringify(cursorOptions));
+  }
+
   const pwaMetadata = await page.evaluate(() =>
     Object.fromEntries(
       ['theme-color', 'apple-mobile-web-app-capable', 'apple-mobile-web-app-status-bar-style'].map(

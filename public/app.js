@@ -71,6 +71,7 @@ const els = {
 // ---------------------------------------------------------------- terminal
 const term = new Terminal({
   cursorBlink: true,
+  cursorStyle: 'bar',
   allowProposedApi: true,
   scrollback: 5000,
   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
