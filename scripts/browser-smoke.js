@@ -5,6 +5,7 @@
 // sends input, and renders live output. Run with the server up on
 // 127.0.0.1:8080.
 
+const fs = require('fs');
 const { launchBrowser, sleep, waitFor: waitUntil } = require('./browser-test-utils');
 
 const URL = process.env.SMOKE_URL || 'http://127.0.0.1:8080/';
@@ -215,10 +216,189 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
     !String(virtualKeys.activeElementClass).includes('xterm-helper-textarea') ||
     virtualKeys.clipboardReads !== 1 ||
     JSON.stringify(virtualKeys.labels) !==
-      JSON.stringify(['⌨️', '📋', 'Esc', '^C', '^D', '←', '↓', '↑', '→', 'PgUp', 'PgDn', 'Home', 'End']) ||
+      JSON.stringify(['⌨️', '📋', 'Esc', '^C', '^D', '←', '↓', '↑', '→', 'PgUp', 'PgDn', 'Home', 'End', '📎']) ||
     JSON.stringify(virtualKeys.payloads) !== JSON.stringify(expectedVirtualKeyPayloads)
   ) {
     errors.push('virtual key rail mismatch: ' + JSON.stringify(virtualKeys));
+  }
+
+  const mobileUploadSource = await page.evaluate(() => {
+    const rail = document.getElementById('mobile-keys');
+    const attachment = rail.querySelector('button[data-upload]');
+    attachment.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+    attachment.click();
+    const result = {
+      isLast: attachment === rail.lastElementChild,
+      title: document.getElementById('overlay-title').textContent,
+      actions: Array.from(document.querySelectorAll('#overlay-actions button')).map(
+        (button) => button.textContent
+      ),
+      photoAccept: document.getElementById('upload-photo').accept,
+      fileAccept: document.getElementById('upload-file').accept,
+    };
+    document.getElementById('overlay').click();
+    result.dismissedByBackdrop = document.getElementById('overlay').classList.contains('hidden');
+    document.querySelector('.xterm-helper-textarea')?.focus();
+    return result;
+  });
+  if (
+    !mobileUploadSource.isLast ||
+    mobileUploadSource.title !== 'Attach file' ||
+    JSON.stringify(mobileUploadSource.actions) !==
+      JSON.stringify(['Photo or image', 'Choose file', 'Cancel']) ||
+    mobileUploadSource.photoAccept !== 'image/*' ||
+    mobileUploadSource.fileAccept !== '' ||
+    !mobileUploadSource.dismissedByBackdrop
+  ) {
+    errors.push('mobile upload source mismatch: ' + JSON.stringify(mobileUploadSource));
+  }
+
+  const progressModal = await page.evaluate(async () => {
+    const NativeXHR = window.XMLHttpRequest;
+    class FakeXHR extends EventTarget {
+      constructor() {
+        super();
+        this.upload = new EventTarget();
+      }
+      open() {}
+      setRequestHeader() {}
+      send() {
+        this.upload.dispatchEvent(
+          new ProgressEvent('progress', { lengthComputable: true, loaded: 5, total: 10 })
+        );
+      }
+      abort() {
+        this.dispatchEvent(new Event('abort'));
+      }
+    }
+    window.XMLHttpRequest = FakeXHR;
+    try {
+      window.uploadFile(new File(['0123456789'], 'progress.bin'));
+      const overlay = document.getElementById('overlay');
+      const before = {
+        title: document.getElementById('overlay-title').textContent,
+        progressText: document.querySelector('.upload-progress-text')?.textContent,
+      };
+      overlay.click();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      const stayedOpen = !overlay.classList.contains('hidden');
+      const actions = Array.from(document.querySelectorAll('#overlay-actions button')).map(
+        (button) => button.textContent
+      );
+      document.querySelector('#overlay-actions button')?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return {
+        ...before,
+        stayedOpen,
+        actions,
+        canceled: overlay.classList.contains('hidden'),
+      };
+    } finally {
+      window.XMLHttpRequest = NativeXHR;
+      document.querySelector('.xterm-helper-textarea')?.focus();
+    }
+  });
+  if (
+    progressModal.title !== 'Uploading file' ||
+    !/50%/.test(progressModal.progressText || '') ||
+    !progressModal.stayedOpen ||
+    JSON.stringify(progressModal.actions) !== JSON.stringify(['Cancel']) ||
+    !progressModal.canceled
+  ) {
+    errors.push('upload progress modal mismatch: ' + JSON.stringify(progressModal));
+  }
+
+  const uploadName = `WT upload ${Date.now()}.bin`;
+  const uploadConfirmation = await page.evaluate((name) => {
+    const textarea = document.querySelector('.xterm-helper-textarea');
+    const data = new DataTransfer();
+    data.items.add(new File(['webterm-upload'], name, { type: 'application/octet-stream' }));
+    data.setData('text/plain', 'fallback text');
+    textarea.dispatchEvent(
+      new ClipboardEvent('paste', {
+        clipboardData: data,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    const actions = Array.from(document.querySelectorAll('#overlay-actions button')).map(
+      (button) => button.textContent
+    );
+    document.getElementById('overlay').click();
+    return {
+      title: document.getElementById('overlay-title').textContent,
+      actions,
+      dismissedByBackdrop: document.getElementById('overlay').classList.contains('hidden'),
+    };
+  }, uploadName);
+  if (
+    uploadConfirmation.title !== 'Upload file?' ||
+    JSON.stringify(uploadConfirmation.actions) !==
+      JSON.stringify(['Upload and paste path', 'Paste text instead', 'Cancel']) ||
+    !uploadConfirmation.dismissedByBackdrop
+  ) {
+    errors.push('upload confirmation mismatch: ' + JSON.stringify(uploadConfirmation));
+  }
+
+  const uploadInputStart = inputPayloads.length;
+  await page.evaluate((name) => {
+    const textarea = document.querySelector('.xterm-helper-textarea');
+    const data = new DataTransfer();
+    data.items.add(new File(['webterm-upload'], name, { type: 'application/octet-stream' }));
+    textarea.dispatchEvent(
+      new ClipboardEvent('paste', {
+        clipboardData: data,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    document.querySelector('#overlay-actions button')?.click();
+  }, uploadName);
+  const uploadFinished = await waitFor(() =>
+    page.evaluate(() => document.getElementById('status').textContent.startsWith('uploaded /tmp/'))
+  );
+  const uploadedPath = uploadFinished
+    ? await page.evaluate(() => document.getElementById('status').textContent.slice('uploaded '.length))
+    : '';
+  const uploadedPathPasted = uploadedPath
+    ? await waitFor(() => inputPayloads.slice(uploadInputStart).join('').includes(`'${uploadedPath}'`))
+    : false;
+  if (!uploadFinished || !uploadedPathPasted) {
+    errors.push(
+      'real upload did not finish and paste its quoted path: ' +
+        JSON.stringify({ uploadFinished, uploadedPath, payloads: inputPayloads.slice(uploadInputStart) })
+    );
+  }
+  if (uploadedPath) await fs.promises.unlink(uploadedPath).catch(() => {});
+  await page.keyboard.down('Control');
+  await page.keyboard.press('KeyC');
+  await page.keyboard.up('Control');
+  await sleep(200);
+
+  const dropConfirmation = await page.evaluate(() => {
+    const data = new DataTransfer();
+    data.items.add(new File(['drop'], 'dropped.bin', { type: 'application/octet-stream' }));
+    document.dispatchEvent(
+      new DragEvent('dragenter', { dataTransfer: data, bubbles: true, cancelable: true })
+    );
+    const hintVisible = !document.getElementById('drop-hint').classList.contains('hidden');
+    document.dispatchEvent(
+      new DragEvent('drop', { dataTransfer: data, bubbles: true, cancelable: true })
+    );
+    const title = document.getElementById('overlay-title').textContent;
+    const hintHidden = document.getElementById('drop-hint').classList.contains('hidden');
+    Array.from(document.querySelectorAll('#overlay-actions button'))
+      .find((button) => button.textContent === 'Cancel')
+      ?.click();
+    document.querySelector('.xterm-helper-textarea')?.focus();
+    return { hintVisible, hintHidden, title };
+  });
+  if (
+    !dropConfirmation.hintVisible ||
+    !dropConfirmation.hintHidden ||
+    dropConfirmation.title !== 'Upload file?'
+  ) {
+    errors.push('drop upload confirmation mismatch: ' + JSON.stringify(dropConfirmation));
   }
 
   const keyboardViewport = await page.evaluate(async () => {

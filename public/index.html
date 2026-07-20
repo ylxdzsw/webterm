@@ -31,11 +31,23 @@
       <button type="button" data-input="page-down">PgDn</button>
       <button type="button" data-input="home">Home</button>
       <button type="button" data-input="end">End</button>
+      <button type="button" data-upload aria-label="Upload a file">📎</button>
     </nav>
+
+    <input id="upload-photo" class="hidden" type="file" accept="image/*" />
+    <input id="upload-file" class="hidden" type="file" />
+
+    <div id="drop-hint" class="drop-hint hidden">Drop file to upload</div>
 
     <div id="status" class="status hidden"></div>
 
-    <div id="overlay" class="overlay hidden">
+    <div
+      id="overlay"
+      class="overlay hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="overlay-title"
+    >
       <div class="card">
         <button
           type="button"

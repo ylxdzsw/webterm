@@ -48,6 +48,7 @@ const TOUCH_DOUBLE_TAP_SLOP_PX = 40;
 const DESKTOP_TERMINAL_FONT_SIZE = 14;
 const PHONE_TERMINAL_FONT_SIZE = 12;
 const PHONE_TERMINAL_MAX_WIDTH = 700;
+const MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
 
 // SGR mouse: ESC [ < Pb ; Px ; Py M|m  (1006/1016). Pb has bit 5 set on MOVE.
 const SGR_MOUSE_RE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])/;
@@ -56,6 +57,9 @@ const els = {
   terminal: document.getElementById('terminal'),
   terminalFit: document.getElementById('terminal-fit'),
   mobileKeys: document.getElementById('mobile-keys'),
+  uploadPhoto: document.getElementById('upload-photo'),
+  uploadFile: document.getElementById('upload-file'),
+  dropHint: document.getElementById('drop-hint'),
   status: document.getElementById('status'),
   overlay: document.getElementById('overlay'),
   overlayTitle: document.getElementById('overlay-title'),
@@ -209,7 +213,8 @@ function setStatus(text, kind) {
   els.status.classList.remove('hidden');
 }
 
-let overlayKind = null; // null | 'session-ended' | ...
+let overlayKind = null; // null | 'session-ended' | 'upload-*' | ...
+let activeUpload = null;
 
 function textParagraph(text) {
   const p = document.createElement('p');
@@ -252,6 +257,8 @@ function showOverlay(title, body, actions, kind) {
     els.overlayDismiss.classList.add('hidden');
   }
   els.overlay.classList.remove('hidden');
+  const firstAction = els.overlayActions.querySelector('button, a');
+  if (firstAction instanceof HTMLElement) firstAction.focus({ preventScroll: true });
 }
 function hideOverlay() {
   els.overlay.classList.add('hidden');
@@ -264,6 +271,289 @@ function dismissSessionEndedOverlay() {
   hideOverlay();
   setStatus('session ended — reload for a new shell', 'err');
 }
+
+function dismissOverlayByUser() {
+  if (overlayKind === 'session-ended') {
+    dismissSessionEndedOverlay();
+    return;
+  }
+  if (
+    overlayKind === 'upload-confirm' ||
+    overlayKind === 'upload-source' ||
+    overlayKind === 'upload-error'
+  ) {
+    hideOverlay();
+  }
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 1024) return `${Math.max(0, bytes || 0)} B`;
+  const units = ['KiB', 'MiB', 'GiB'];
+  let value = bytes;
+  let unit = 'B';
+  for (const next of units) {
+    value /= 1024;
+    unit = next;
+    if (value < 1024) break;
+  }
+  return `${value < 10 ? value.toFixed(1) : value.toFixed(0)} ${unit}`;
+}
+
+function shellQuotePath(value) {
+  const text = String(value || '');
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(text)) return text;
+  return `'${text.replaceAll("'", "'\\''")}'`;
+}
+
+function uploadErrorMessage(msg, status) {
+  if (status === 413 || msg?.error === 'payload too large') {
+    return 'The file exceeds WebTerm’s 64 MiB upload limit.';
+  }
+  if (msg?.error === 'ended') return 'The terminal session has ended.';
+  return msg?.error || 'The file could not be uploaded.';
+}
+
+function parseUploadResponse(xhr) {
+  const contentType = (xhr.getResponseHeader('Content-Type') || '').toLowerCase();
+  const text = String(xhr.responseText || '');
+  if (!contentType.includes('application/json') || !isOurs(text)) return null;
+  try {
+    const msg = JSON.parse(text);
+    return msg?.m === 'WT1' && msg?.t === 'upload' ? msg : null;
+  } catch {
+    return null;
+  }
+}
+
+function showUploadError(file, message) {
+  const actions = [];
+  if (file) {
+    actions.push({ label: 'Retry', onClick: () => uploadFile(file) });
+  }
+  actions.push({ label: 'Close', secondary: true, onClick: hideOverlay });
+  showOverlay('Upload failed', message, actions, 'upload-error');
+}
+
+function uploadProgressBody(file) {
+  const name = textParagraph(file.name || 'Unnamed file');
+  const progress = document.createElement('progress');
+  progress.className = 'upload-progress';
+  progress.max = 1;
+  progress.value = 0;
+  const status = textParagraph(`Uploading 0 B of ${formatBytes(file.size)}`);
+  status.className = 'upload-progress-text';
+  return { nodes: [name, progress, status], progress, status };
+}
+
+function uploadFile(file) {
+  if (!file || activeUpload || manualStop || sessionEnded) return;
+  if (file.size > MAX_UPLOAD_BYTES) {
+    showUploadError(null, 'The file exceeds WebTerm’s 64 MiB upload limit.');
+    return;
+  }
+
+  const xhr = new XMLHttpRequest();
+  const progressUi = uploadProgressBody(file);
+  let complete = false;
+  activeUpload = { file, xhr };
+
+  function finish() {
+    if (complete) return false;
+    complete = true;
+    if (activeUpload?.xhr === xhr) activeUpload = null;
+    return true;
+  }
+
+  xhr.upload.addEventListener('progress', (ev) => {
+    if (!ev.lengthComputable || ev.total <= 0) {
+      progressUi.progress.removeAttribute('value');
+      progressUi.status.textContent = `Uploading ${formatBytes(ev.loaded)}`;
+      return;
+    }
+    const ratio = Math.min(1, ev.loaded / ev.total);
+    progressUi.progress.value = ratio;
+    progressUi.status.textContent =
+      `Uploading ${Math.round(ratio * 100)}% — ` +
+      `${formatBytes(ev.loaded)} of ${formatBytes(ev.total)}`;
+  });
+  xhr.upload.addEventListener('load', () => {
+    progressUi.progress.value = 1;
+    progressUi.status.textContent = 'Saving…';
+  });
+  xhr.addEventListener('load', () => {
+    if (!finish()) return;
+    const msg = parseUploadResponse(xhr);
+    if (!msg) {
+      unexpectedResponseDetected();
+      return;
+    }
+    if (xhr.status < 200 || xhr.status >= 300 || !msg.ok || !msg.path) {
+      showUploadError(file, uploadErrorMessage(msg, xhr.status));
+      return;
+    }
+    hideOverlay();
+    term.paste(shellQuotePath(msg.path));
+    setStatus(`uploaded ${msg.path}`, 'ok');
+    statusHideTimer = setTimeout(() => {
+      statusHideTimer = null;
+      setStatus('');
+    }, 3000);
+  });
+  xhr.addEventListener('error', () => {
+    if (!finish()) return;
+    showUploadError(file, 'The upload failed because of a network error.');
+  });
+  xhr.addEventListener('timeout', () => {
+    if (!finish()) return;
+    showUploadError(file, 'The upload timed out.');
+  });
+  xhr.addEventListener('abort', () => {
+    if (!finish()) return;
+    if (overlayKind === 'upload-progress') hideOverlay();
+    if (!manualStop && !sessionEnded) {
+      setStatus('upload canceled', 'warn');
+      statusHideTimer = setTimeout(() => {
+        statusHideTimer = null;
+        setStatus('');
+      }, 2500);
+    }
+  });
+
+  showOverlay(
+    'Uploading file',
+    progressUi.nodes,
+    [{ label: 'Cancel', secondary: true, onClick: () => xhr.abort() }],
+    'upload-progress'
+  );
+
+  xhr.open('POST', 'api/upload', true);
+  xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+  xhr.setRequestHeader('X-Webterm-Filename', encodeURIComponent(file.name || ''));
+  if (file.type) xhr.setRequestHeader('X-Webterm-File-Type', file.type);
+  xhr.send(file);
+}
+
+function showUploadConfirmation(file, alternateText = '') {
+  if (!file || activeUpload || manualStop || sessionEnded) return;
+  if (file.size > MAX_UPLOAD_BYTES) {
+    showUploadError(null, 'The file exceeds WebTerm’s 64 MiB upload limit.');
+    return;
+  }
+  const actions = [{ label: 'Upload and paste path', onClick: () => uploadFile(file) }];
+  if (alternateText) {
+    actions.push({
+      label: 'Paste text instead',
+      secondary: true,
+      onClick: () => {
+        hideOverlay();
+        term.paste(alternateText);
+      },
+    });
+  }
+  actions.push({ label: 'Cancel', secondary: true, onClick: hideOverlay });
+  showOverlay(
+    'Upload file?',
+    `Upload “${file.name || 'Unnamed file'}” (${formatBytes(file.size)}) to /tmp and paste its path?`,
+    actions,
+    'upload-confirm'
+  );
+}
+
+function chooseUploadInput(input) {
+  hideOverlay();
+  input.value = '';
+  input.click();
+}
+
+function showUploadSource() {
+  if (activeUpload || manualStop || sessionEnded) return;
+  showOverlay(
+    'Attach file',
+    'Choose an image from your device or upload another file.',
+    [
+      { label: 'Photo or image', onClick: () => chooseUploadInput(els.uploadPhoto) },
+      {
+        label: 'Choose file',
+        secondary: true,
+        onClick: () => chooseUploadInput(els.uploadFile),
+      },
+      { label: 'Cancel', secondary: true, onClick: hideOverlay },
+    ],
+    'upload-source'
+  );
+}
+
+for (const input of [els.uploadPhoto, els.uploadFile]) {
+  input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    input.value = '';
+    if (file) uploadFile(file);
+  });
+}
+
+function clipboardFiles(dataTransfer) {
+  const itemFiles = Array.from(dataTransfer?.items || [])
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter(Boolean);
+  return itemFiles.length ? itemFiles : Array.from(dataTransfer?.files || []);
+}
+
+document.addEventListener(
+  'paste',
+  (ev) => {
+    const files = clipboardFiles(ev.clipboardData);
+    if (!files.length) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    if (files.length !== 1) {
+      showUploadError(null, 'Upload one file at a time.');
+      return;
+    }
+    showUploadConfirmation(files[0], ev.clipboardData.getData('text/plain'));
+  },
+  true
+);
+
+let fileDragDepth = 0;
+function isFileDrag(ev) {
+  return Array.from(ev.dataTransfer?.types || []).includes('Files');
+}
+
+document.addEventListener('dragenter', (ev) => {
+  if (!isFileDrag(ev)) return;
+  ev.preventDefault();
+  fileDragDepth += 1;
+  if (!activeUpload && !manualStop && !sessionEnded && els.overlay.classList.contains('hidden')) {
+    els.dropHint.classList.remove('hidden');
+  }
+});
+
+document.addEventListener('dragover', (ev) => {
+  if (!isFileDrag(ev)) return;
+  ev.preventDefault();
+  if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'copy';
+});
+
+document.addEventListener('dragleave', (ev) => {
+  if (fileDragDepth === 0) return;
+  fileDragDepth = Math.max(0, fileDragDepth - 1);
+  if (fileDragDepth === 0) els.dropHint.classList.add('hidden');
+});
+
+document.addEventListener('drop', (ev) => {
+  if (!isFileDrag(ev)) return;
+  ev.preventDefault();
+  fileDragDepth = 0;
+  els.dropHint.classList.add('hidden');
+  const files = Array.from(ev.dataTransfer?.files || []);
+  if (activeUpload || manualStop || sessionEnded) return;
+  if (files.length !== 1) {
+    showUploadError(null, 'Upload one file at a time.');
+    return;
+  }
+  showUploadConfirmation(files[0]);
+});
 
 function setDocTitle(title) {
   document.title = title || 'Webterm';
@@ -303,6 +593,7 @@ function hasStreamContentType(resp) {
 }
 
 function stopAndShowRefresh(title, bodyContent, statusText) {
+  activeUpload?.xhr.abort();
   manualStop = true;
   connected = false;
   connecting = false;
@@ -362,6 +653,7 @@ function connectionLostDetected() {
 // The program exited: the server process is gone. Reloading the page spawns a
 // fresh shell (under socket activation) or reconnects once the unit is back.
 function showReload(code) {
+  activeUpload?.xhr.abort();
   clearTimeout(statusHideTimer);
   statusHideTimer = null;
   els.status.classList.add('hidden');
@@ -386,7 +678,7 @@ async function connect() {
   connecting = true;
   manualStop = false;
   clearReconnect();
-  hideOverlay();
+  if (overlayKind !== 'upload-progress') hideOverlay();
   setStatus('connecting…', '');
 
   abort?.abort();
@@ -647,6 +939,11 @@ els.mobileKeys.addEventListener('click', async (ev) => {
         setStatus('');
       }, 2500);
     }
+    return;
+  }
+  if (button.hasAttribute('data-upload')) {
+    ev.preventDefault();
+    showUploadSource();
     return;
   }
   const data = VIRTUAL_KEY_INPUT[button.dataset.input];
@@ -1190,13 +1487,23 @@ async function safeText(resp) {
 els.overlayDismiss.addEventListener('click', dismissSessionEndedOverlay);
 
 els.overlay.addEventListener('click', (ev) => {
-  if (ev.target === els.overlay) dismissSessionEndedOverlay();
+  if (ev.target === els.overlay) dismissOverlayByUser();
 });
 
 document.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape' && overlayKind === 'session-ended') {
+  if (ev.key !== 'Escape' || els.overlay.classList.contains('hidden')) return;
+  if (overlayKind === 'upload-progress') {
     ev.preventDefault();
-    dismissSessionEndedOverlay();
+    return;
+  }
+  if (
+    overlayKind === 'session-ended' ||
+    overlayKind === 'upload-confirm' ||
+    overlayKind === 'upload-source' ||
+    overlayKind === 'upload-error'
+  ) {
+    ev.preventDefault();
+    dismissOverlayByUser();
   }
 });
 

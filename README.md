@@ -65,6 +65,7 @@ endpoint that is handy for debugging and tests:
 | Output | `GET api/stream` (long-lived chunked response) | snapshot + live PTY output |
 | Input  | `POST api/input` (coalesced, keep-alive) | keystrokes |
 | Resize | `POST api/resize` | terminal size → PTY `SIGWINCH` |
+| Upload | `POST api/upload` (streamed binary body) | file → `/tmp`, then paste path |
 | Snapshot | `GET api/snapshot` | current visible terminal text |
 
 URLs are **relative** to the page, so the same client works whether it is served
@@ -115,6 +116,13 @@ The child process gets `TERM=xterm-256color`, `COLORTERM=truecolor`, and a
 UTF-8 locale, and the PTY is resized to match the browser viewport before the
 first paint, so full-screen apps render correctly. Mouse reporting and bracketed
 paste are passed through by xterm.js.
+
+Files can be pasted or dropped onto the desktop terminal after confirmation.
+On mobile, the final `📎` button in the virtual-key rail opens the system image
+or file picker. Uploads are limited to 64 MiB, stored in `/tmp` with mode `0600`,
+and retain the original filename when safe; collisions receive a random suffix.
+The returned absolute path is pasted into the terminal after the upload closes
+successfully.
 
 ### Mobile layout
 

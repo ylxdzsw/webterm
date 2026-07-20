@@ -73,6 +73,11 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
 
+        # File uploads are streamed to the slot process and capped to match
+        # WebTerm's application-level limit.
+        client_max_body_size 64m;
+        proxy_request_buffering off;
+
         # Terminal traffic: stream output without buffering, allow long-lived
         # connections, and never cache/compress.
         proxy_buffering off;

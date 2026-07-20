@@ -6,6 +6,7 @@ const path = require('path');
 const { Session, MAX_READ_ROWS } = require('./session');
 const { frame } = require('./protocol');
 const { createStreamSubscriber } = require('./stream-subscriber');
+const { cleanupActiveUploadsSync, receiveUpload } = require('./upload');
 
 // Intentionally undocumented. Browser test harnesses use this to bind a local
 // TCP listener without systemd socket activation.
@@ -74,6 +75,7 @@ const session = new Session();
 // systemd the unit goes inactive and its cgroup is reaped; the matching socket
 // unit re-activates a fresh process on the next request.
 session.onExit = (code) => {
+  cleanupActiveUploadsSync();
   setImmediate(() => process.exit(code ? 1 : 0));
 };
 
@@ -341,12 +343,49 @@ function handleResize(req, res) {
   );
 }
 
+async function handleUpload(req, res) {
+  if (!requireActivePost(req, res)) return;
+  const contentType = req.headers['content-type'] || '';
+  if (!contentType.includes('application/octet-stream')) {
+    req.resume();
+    sendJsonFrame(res, { t: 'upload', ok: false, error: 'unsupported media type' }, 415);
+    return;
+  }
+
+  let clientGone = false;
+  res.once('close', () => {
+    if (!res.writableFinished) clientGone = true;
+  });
+
+  try {
+    const result = await receiveUpload(req);
+    if (clientGone || res.destroyed) {
+      await fs.promises.unlink(result.path).catch(() => {});
+      return;
+    }
+    sendJsonFrame(res, { t: 'upload', ok: true, path: result.path, bytes: result.bytes });
+  } catch (err) {
+    if (err?.code === 'UPLOAD_ABORTED' || res.destroyed) return;
+    const tooLarge = err?.code === 'UPLOAD_TOO_LARGE';
+    sendJsonFrame(
+      res,
+      {
+        t: 'upload',
+        ok: false,
+        error: tooLarge ? 'payload too large' : err?.message || 'upload failed',
+      },
+      tooLarge ? 413 : err?.message === 'bad filename' ? 400 : 500
+    );
+  }
+}
+
 const API_HANDLERS = new Map([
   ['/api/snapshot', handleSnapshot],
   ['/api/state', handleState],
   ['/api/stream', handleStream],
   ['/api/input', handleInput],
   ['/api/resize', handleResize],
+  ['/api/upload', handleUpload],
 ]);
 
 function handleRequest(req, res) {
@@ -400,6 +439,7 @@ server.requestTimeout = 0;
 server.keepAliveTimeout = 75000;
 
 function shutdown() {
+  cleanupActiveUploadsSync();
   session.destroy();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 2000).unref();
