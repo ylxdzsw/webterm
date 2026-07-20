@@ -118,8 +118,8 @@ first paint, so full-screen apps render correctly. Mouse reporting and bracketed
 paste are passed through by xterm.js.
 
 Files can be pasted or dropped onto the desktop terminal after confirmation.
-On mobile, the final `📎` button in the virtual-key rail opens the system image
-or file picker. Uploads are limited to 64 MiB, stored in `/tmp` with mode `0600`,
+On mobile, the final `📎` button in the virtual-key rail opens the system picker
+directly. Uploads are limited to 64 MiB, stored in `/tmp` with mode `0600`,
 and retain the original filename when safe; collisions receive a random suffix.
 The returned absolute path is pasted into the terminal after the upload closes
 successfully.

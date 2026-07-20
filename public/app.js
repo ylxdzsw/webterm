@@ -57,7 +57,6 @@ const els = {
   terminal: document.getElementById('terminal'),
   terminalFit: document.getElementById('terminal-fit'),
   mobileKeys: document.getElementById('mobile-keys'),
-  uploadPhoto: document.getElementById('upload-photo'),
   uploadFile: document.getElementById('upload-file'),
   dropHint: document.getElementById('drop-hint'),
   status: document.getElementById('status'),
@@ -280,7 +279,6 @@ function dismissOverlayByUser() {
   }
   if (
     overlayKind === 'upload-confirm' ||
-    overlayKind === 'upload-source' ||
     overlayKind === 'upload-error'
   ) {
     hideOverlay();
@@ -460,37 +458,11 @@ function showUploadConfirmation(file, alternateText = '') {
   );
 }
 
-function chooseUploadInput(input) {
-  hideOverlay();
-  input.value = '';
-  input.click();
-}
-
-function showUploadSource() {
-  if (activeUpload || manualStop || sessionEnded) return;
-  showOverlay(
-    'Attach file',
-    'Choose an image from your device or upload another file.',
-    [
-      { label: 'Photo or image', onClick: () => chooseUploadInput(els.uploadPhoto) },
-      {
-        label: 'Choose file',
-        secondary: true,
-        onClick: () => chooseUploadInput(els.uploadFile),
-      },
-      { label: 'Cancel', secondary: true, onClick: hideOverlay },
-    ],
-    'upload-source'
-  );
-}
-
-for (const input of [els.uploadPhoto, els.uploadFile]) {
-  input.addEventListener('change', () => {
-    const file = input.files?.[0];
-    input.value = '';
-    if (file) uploadFile(file);
-  });
-}
+els.uploadFile.addEventListener('change', () => {
+  const file = els.uploadFile.files?.[0];
+  els.uploadFile.value = '';
+  if (file) uploadFile(file);
+});
 
 function clipboardFiles(dataTransfer) {
   const itemFiles = Array.from(dataTransfer?.items || [])
@@ -944,7 +916,10 @@ els.mobileKeys.addEventListener('click', async (ev) => {
   }
   if (button.hasAttribute('data-upload')) {
     ev.preventDefault();
-    showUploadSource();
+    if (!activeUpload && !manualStop && !sessionEnded) {
+      els.uploadFile.value = '';
+      els.uploadFile.click();
+    }
     return;
   }
   const data = VIRTUAL_KEY_INPUT[button.dataset.input];
@@ -1500,7 +1475,6 @@ document.addEventListener('keydown', (ev) => {
   if (
     overlayKind === 'session-ended' ||
     overlayKind === 'upload-confirm' ||
-    overlayKind === 'upload-source' ||
     overlayKind === 'upload-error'
   ) {
     ev.preventDefault();

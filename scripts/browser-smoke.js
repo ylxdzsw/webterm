@@ -230,35 +230,37 @@ const waitFor = (fn) => waitUntil(fn, 3000, 25);
     errors.push('virtual key rail mismatch: ' + JSON.stringify(virtualKeys));
   }
 
-  const mobileUploadSource = await page.evaluate(() => {
+  const mobileUploadPicker = await page.evaluate(() => {
     const rail = document.getElementById('mobile-keys');
     const attachment = rail.querySelector('button[data-upload]');
+    const input = document.getElementById('upload-file');
+    let inputClicks = 0;
+    input.addEventListener(
+      'click',
+      (ev) => {
+        inputClicks += 1;
+        ev.preventDefault();
+      },
+      { once: true }
+    );
     attachment.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
     attachment.click();
-    const result = {
+    return {
       isLast: attachment === rail.lastElementChild,
-      title: document.getElementById('overlay-title').textContent,
-      actions: Array.from(document.querySelectorAll('#overlay-actions button')).map(
-        (button) => button.textContent
-      ),
-      photoAccept: document.getElementById('upload-photo').accept,
-      fileAccept: document.getElementById('upload-file').accept,
+      inputClicks,
+      inputAccept: input.accept,
+      overlayHidden: document.getElementById('overlay').classList.contains('hidden'),
+      imageInputAbsent: document.getElementById('upload-photo') === null,
     };
-    document.getElementById('overlay').click();
-    result.dismissedByBackdrop = document.getElementById('overlay').classList.contains('hidden');
-    document.querySelector('.xterm-helper-textarea')?.focus();
-    return result;
   });
   if (
-    !mobileUploadSource.isLast ||
-    mobileUploadSource.title !== 'Attach file' ||
-    JSON.stringify(mobileUploadSource.actions) !==
-      JSON.stringify(['Photo or image', 'Choose file', 'Cancel']) ||
-    mobileUploadSource.photoAccept !== 'image/*' ||
-    mobileUploadSource.fileAccept !== '' ||
-    !mobileUploadSource.dismissedByBackdrop
+    !mobileUploadPicker.isLast ||
+    mobileUploadPicker.inputClicks !== 1 ||
+    mobileUploadPicker.inputAccept !== '' ||
+    !mobileUploadPicker.overlayHidden ||
+    !mobileUploadPicker.imageInputAbsent
   ) {
-    errors.push('mobile upload source mismatch: ' + JSON.stringify(mobileUploadSource));
+    errors.push('mobile upload picker mismatch: ' + JSON.stringify(mobileUploadPicker));
   }
 
   const progressModal = await page.evaluate(async () => {
