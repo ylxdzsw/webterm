@@ -28,6 +28,11 @@ ExecStart=/usr/bin/node src/server.js
 # keeps a failed start from looping (together with StartLimit* above).
 Restart=no
 
+# A foreground child such as Claude Code may be the process selected by the
+# kernel OOM killer. Keep the webterm server and shell alive in that case;
+# explicit unit stops still clean up the full cgroup via KillMode below.
+OOMPolicy=continue
+
 # Authoritative cleanup: when the unit stops/exits, kill every process left in
 # the service cgroup (backgrounded jobs, daemons the shell forked, ...). This
 # is the most reliable teardown and the reason we bind one shell per unit.
