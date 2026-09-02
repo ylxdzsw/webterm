@@ -3,6 +3,7 @@
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const { readAsset } = require('./assets');
 const { Session, MAX_READ_ROWS } = require('./session');
 const { frame } = require('./protocol');
 const { createStreamSubscriber } = require('./stream-subscriber');
@@ -27,20 +28,16 @@ const CSP = [
   "form-action 'none'",
 ].join('; ');
 
-const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const STATIC_ROUTES = new Map([
-  ['/', path.join(PUBLIC_DIR, 'index.html')],
-  ['/index.html', path.join(PUBLIC_DIR, 'index.html')],
-  ['/app.js', path.join(PUBLIC_DIR, 'app.js')],
-  ['/style.css', path.join(PUBLIC_DIR, 'style.css')],
-  ['/favicon.svg', path.join(PUBLIC_DIR, 'favicon.svg')],
-  ['/apple-touch-icon.png', path.join(PUBLIC_DIR, 'apple-touch-icon.png')],
-  ['/vendor/xterm.js', path.join(__dirname, '..', 'node_modules', '@xterm', 'xterm', 'lib', 'xterm.js')],
-  ['/vendor/xterm.css', path.join(__dirname, '..', 'node_modules', '@xterm', 'xterm', 'css', 'xterm.css')],
-  [
-    '/vendor/addon-fit.js',
-    path.join(__dirname, '..', 'node_modules', '@xterm', 'addon-fit', 'lib', 'addon-fit.js'),
-  ],
+  ['/', 'public/index.html'],
+  ['/index.html', 'public/index.html'],
+  ['/app.js', 'public/app.js'],
+  ['/style.css', 'public/style.css'],
+  ['/favicon.svg', 'public/favicon.svg'],
+  ['/apple-touch-icon.png', 'public/apple-touch-icon.png'],
+  ['/vendor/xterm.js', 'vendor/xterm.js'],
+  ['/vendor/xterm.css', 'vendor/xterm.css'],
+  ['/vendor/addon-fit.js', 'vendor/addon-fit.js'],
 ]);
 
 const MIME_TYPES = new Map([
@@ -145,11 +142,11 @@ function requestUrl(req) {
 }
 
 function serveStatic(req, res, pathname) {
-  const file = STATIC_ROUTES.get(pathname);
-  if (!file) return false;
+  const asset = STATIC_ROUTES.get(pathname);
+  if (!asset) return false;
   if (!requireRead(req, res)) return true;
 
-  fs.readFile(file, (err, body) => {
+  readAsset(asset, (err, body) => {
     if (err) {
       sendNotFound(res);
       return;
@@ -157,7 +154,7 @@ function serveStatic(req, res, pathname) {
 
     applyDefaultHeaders(res);
     res.writeHead(200, {
-      'Content-Type': MIME_TYPES.get(path.extname(file)) || 'application/octet-stream',
+      'Content-Type': MIME_TYPES.get(path.extname(asset)) || 'application/octet-stream',
       'Content-Length': body.length,
     });
     if (req.method === 'HEAD') {

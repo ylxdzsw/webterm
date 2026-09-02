@@ -8,6 +8,7 @@ const path = require('path');
 const { PassThrough } = require('stream');
 const { Terminal } = require('@xterm/headless');
 const { SerializeAddon } = require('@xterm/addon-serialize');
+const { ASSET_KEYS, readAsset } = require('../src/assets');
 const { Session, resolveShell } = require('../src/session');
 const { createStreamSubscriber } = require('../src/stream-subscriber');
 const {
@@ -62,6 +63,15 @@ function createTestSession(cols = 5, rows = 3) {
 
 function writeHeadless(term, data) {
   return new Promise((resolve) => term.write(data, resolve));
+}
+
+async function testSourceAssets() {
+  for (const key of ASSET_KEYS) {
+    const body = await new Promise((resolve, reject) => {
+      readAsset(key, (err, asset) => (err ? reject(err) : resolve(asset)));
+    });
+    assert(body.length > 0, `${key} is empty`);
+  }
 }
 
 function testResolveShell() {
@@ -419,6 +429,7 @@ async function testEndedSessionStillReadable() {
 }
 
 (async () => {
+  await testSourceAssets();
   testResolveShell();
   testUploadFilenames();
   await testUploadCollisionAndMode();

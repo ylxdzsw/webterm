@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const os = require('os');
-const pty = require('node-pty');
+const { pty } = require('./pty');
 const { Terminal } = require('@xterm/headless');
 const { SerializeAddon } = require('@xterm/addon-serialize');
 const { frame } = require('./protocol');
