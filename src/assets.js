@@ -26,15 +26,35 @@ const SOURCE_ASSETS = new Map([
 ]);
 
 const ASSET_KEYS = Object.freeze([...SOURCE_ASSETS.keys()]);
+const STATIC_ROUTES = new Map([
+  ['/', 'public/index.html'],
+  ['/index.html', 'public/index.html'],
+  ['/app.js', 'public/app.js'],
+  ['/style.css', 'public/style.css'],
+  ['/favicon.svg', 'public/favicon.svg'],
+  ['/apple-touch-icon.png', 'public/apple-touch-icon.png'],
+  ['/vendor/xterm.js', 'vendor/xterm.js'],
+  ['/vendor/xterm.css', 'vendor/xterm.css'],
+  ['/vendor/addon-fit.js', 'vendor/addon-fit.js'],
+]);
+
+function sourceAssetPath(key) {
+  const file = SOURCE_ASSETS.get(key);
+  if (!file) throw new Error(`Unknown asset: ${key}`);
+  return file;
+}
 
 function readAsset(key, callback) {
-  if (!SOURCE_ASSETS.has(key)) {
-    callback(new Error(`Unknown asset: ${key}`));
+  let file;
+  try {
+    file = sourceAssetPath(key);
+  } catch (err) {
+    callback(err);
     return;
   }
 
   if (!sea.isSea()) {
-    fs.readFile(SOURCE_ASSETS.get(key), callback);
+    fs.readFile(file, callback);
     return;
   }
 
@@ -45,4 +65,4 @@ function readAsset(key, callback) {
   }
 }
 
-module.exports = { ASSET_KEYS, readAsset };
+module.exports = { ASSET_KEYS, STATIC_ROUTES, readAsset, sourceAssetPath };

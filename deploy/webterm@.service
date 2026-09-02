@@ -20,8 +20,9 @@ StartLimitBurst=5
 [Service]
 Type=simple
 User=youruser
-WorkingDirectory=/opt/webterm
-ExecStart=/usr/bin/node src/server.js
+RuntimeDirectory=webterm-runtime-%i
+RuntimeDirectoryMode=0700
+ExecStart=/usr/local/bin/webterm
 
 # The shell exiting terminates the process; do NOT auto-restart. The matching
 # socket unit brings a fresh instance up on demand. Restart=no is also what

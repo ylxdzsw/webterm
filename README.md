@@ -84,7 +84,10 @@ to a refresh prompt.
 Multiple terminals come from running several socket-activated instances, one per
 slot id, routed by nginx. The templates live in `deploy/`.
 
-1. With Node.js 22.12+ installed, copy the repo to the server (e.g. `/opt/webterm`) and run `npm install --omit=dev`.
+1. Download `webterm-linux-x64` from a release and install it:
+   ```bash
+   sudo install -m 0755 webterm-linux-x64 /usr/local/bin/webterm
+   ```
 2. Install the units and the socket directory:
    ```bash
    sudo cp deploy/webterm@.socket deploy/webterm@.service /etc/systemd/system/
@@ -93,7 +96,7 @@ slot id, routed by nginx. The templates live in `deploy/`.
    sudo systemctl daemon-reload
    sudo systemctl enable --now webterm@{0,1,2,3,4,5,6,7}.socket
    ```
-   Edit `User=` and `WorkingDirectory=` in `webterm@.service` first.
+   Edit `User=` in `webterm@.service` first.
 3. Front it with TLS and any access control you want using
    `deploy/nginx.conf.sample`. It routes `https://your-domain/<id>/…` to
    `/run/webterm/<id>.sock` (stripping the prefix) and redirects `/` → `/0/`.
@@ -109,6 +112,40 @@ WebTerm always runs the effective user's login shell from passwd as a login
 shell. If the passwd entry has no shell or points to something unusable, the
 server fails to start with an explicit error instead of falling back to another
 shell.
+
+The release executable contains Node.js, the server, browser assets, and its
+JavaScript dependencies. It does not need Node.js, npm, `node_modules`, or a
+source checkout on the server. `node-pty` is a native addon, so each service
+instance extracts its embedded runtime into the private
+`/run/webterm-runtime-<slot>` directory created and removed by systemd.
+
+The published executable targets Linux x86-64 with glibc. Other operating
+systems and architectures need their own native build.
+
+## Development and SEA builds
+
+Source development still uses Node.js 22.12 or newer:
+
+```bash
+npm install
+WEBTERM_DEV_PORT=8080 npm start
+```
+
+Production executables are built with the exact Node.js version in
+`.node-version`:
+
+```bash
+npm ci
+npm run test:unit
+npm run build:sea
+npm run test:sea
+```
+
+The build writes `dist/webterm-linux-x64` and its SHA-256 checksum. The SEA
+test copies only the executable into an empty directory, starts a real PTY,
+checks every embedded browser asset against its source, and confirms the
+temporary native runtime is removed. The executable also supports
+`--version` and `--licenses`.
 
 ## TUI notes
 

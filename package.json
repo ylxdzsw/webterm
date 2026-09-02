@@ -5,9 +5,11 @@
   "license": "MIT",
   "description": "Web-based persistent virtual terminal over plain HTTP/1.1 (no WebSocket, no HTTP/2). Survives a TLS-inspecting corporate proxy that occasionally hijacks requests with an interstitial acknowledgement page.",
   "type": "commonjs",
-  "main": "src/server.js",
+  "main": "src/main.js",
   "scripts": {
-    "start": "node src/server.js",
+    "start": "node src/main.js",
+    "build:sea": "node scripts/build-sea.js",
+    "test:sea": "node scripts/test-sea.js",
     "test:unit": "node scripts/unit.js",
     "test:smoke": "node scripts/browser-smoke.js",
     "test:nag": "node scripts/browser-nag.js",
@@ -29,6 +31,11 @@
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
+    "esbuild": "^0.28.2",
     "puppeteer-core": "^25.1.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "node-pty@1.1.0": true
   }
 }

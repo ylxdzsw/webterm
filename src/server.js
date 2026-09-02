@@ -3,7 +3,7 @@
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
-const { readAsset } = require('./assets');
+const { STATIC_ROUTES, readAsset } = require('./assets');
 const { Session, MAX_READ_ROWS } = require('./session');
 const { frame } = require('./protocol');
 const { createStreamSubscriber } = require('./stream-subscriber');
@@ -27,18 +27,6 @@ const CSP = [
   "frame-ancestors 'none'",
   "form-action 'none'",
 ].join('; ');
-
-const STATIC_ROUTES = new Map([
-  ['/', 'public/index.html'],
-  ['/index.html', 'public/index.html'],
-  ['/app.js', 'public/app.js'],
-  ['/style.css', 'public/style.css'],
-  ['/favicon.svg', 'public/favicon.svg'],
-  ['/apple-touch-icon.png', 'public/apple-touch-icon.png'],
-  ['/vendor/xterm.js', 'vendor/xterm.js'],
-  ['/vendor/xterm.css', 'vendor/xterm.css'],
-  ['/vendor/addon-fit.js', 'vendor/addon-fit.js'],
-]);
 
 const MIME_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
